@@ -89,7 +89,7 @@ export default async function TrackPage({ params }: TrackPageProps) {
           </div>
         ) : (
           /* 把原本的 map 列表換成我們的播放器元件 */
-          <TrackPlayer versions={versions} />
+          <TrackPlayer projectId={id} versions={versions} />
         )}
       </main>
     </div>

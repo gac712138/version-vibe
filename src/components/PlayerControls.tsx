@@ -2,7 +2,14 @@
 
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, Activity } from "lucide-react";
+import { Play, Pause, Activity, MessageCircle } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+interface Comment {
+  id: string;
+  content: string;
+  timestamp: number;
+}
 
 interface PlayerControlsProps {
   isPlaying: boolean;
@@ -10,11 +17,10 @@ interface PlayerControlsProps {
   currentVersionName: string | undefined;
   currentTime: number;
   duration: number;
-  // 👇 1. 新增這個定義：接收拖動數值的函式
   onSeek: (value: number) => void;
+  comments?: Comment[]; // 👈 新增：接收留言數據
 }
 
-// 輔助函式：將秒數格式化為 MM:SS
 function formatTime(seconds: number) {
   if (!seconds || isNaN(seconds)) return "0:00";
   const m = Math.floor(seconds / 60);
@@ -28,88 +34,122 @@ export function PlayerControls({
   currentVersionName,
   currentTime,
   duration,
-  // 👇 2. 記得把 onSeek 解構出來
   onSeek,
+  comments = [], // 預設為空陣列
 }: PlayerControlsProps) {
   return (
-    <div className="bg-[#12141c] rounded-t-xl p-6 border-b border-zinc-800/50">
-      {/* Top Bar: Controls & Metadata */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-6">
-          {/* Big Play Button */}
+    <TooltipProvider>
+      <div className="bg-[#12141c] rounded-t-xl p-6 border-b border-zinc-800/50">
+        {/* Top Bar: Controls & Metadata (保持不變) */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-6">
+            <Button
+              onClick={onPlayPauseToggle}
+              size="icon"
+              className="h-16 w-16 rounded-full bg-[#3D3DFF] hover:bg-[#3333d9] shadow-[0_0_20px_rgba(61,61,255,0.3)] transition-transform active:scale-95"
+            >
+              {isPlaying ? (
+                <Pause className="h-8 w-8 fill-current text-white" />
+              ) : (
+                <Play className="h-8 w-8 fill-current text-white ml-1" />
+              )}
+            </Button>
+
+            <div className="space-y-1">
+              <div className="font-mono text-2xl font-bold tracking-tight">
+                <span className="text-white">{formatTime(currentTime)}</span>
+                <span className="text-zinc-600 mx-2">/</span>
+                <span className="text-zinc-500">{formatTime(duration)}</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-medium text-blue-400 tracking-wider uppercase">
+                <span>{isPlaying ? "Playing" : "Paused"}</span>
+                <span className="text-zinc-600">•</span>
+                <span>{currentVersionName || "No version selected"}</span>
+              </div>
+            </div>
+          </div>
+
           <Button
-            onClick={onPlayPauseToggle}
-            size="icon"
-            className="h-16 w-16 rounded-full bg-[#3D3DFF] hover:bg-[#3333d9] shadow-[0_0_20px_rgba(61,61,255,0.3)] transition-transform active:scale-95"
+            variant="outline"
+            size="sm"
+            className="hidden md:flex border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800 gap-2 text-xs font-bold tracking-wider"
           >
-            {isPlaying ? (
-              <Pause className="h-8 w-8 fill-current text-white" />
-            ) : (
-              <Play className="h-8 w-8 fill-current text-white ml-1" />
-            )}
+            <Activity className="h-4 w-4" />
+            LOUDNESS MATCH OFF
           </Button>
-
-          {/* Time & Status Info */}
-          <div className="space-y-1">
-            <div className="font-mono text-2xl font-bold tracking-tight">
-              <span className="text-white">{formatTime(currentTime)}</span>
-              <span className="text-zinc-600 mx-2">/</span>
-              <span className="text-zinc-500">{formatTime(duration)}</span>
-            </div>
-            <div className="flex items-center gap-2 text-xs font-medium text-blue-400 tracking-wider uppercase">
-              <span>{isPlaying ? "Playing" : "Paused"}</span>
-              <span className="text-zinc-600">•</span>
-              {/* 這裡未來要放真實的 Sample Rate 資料 */}
-              <span>48kHz 24bit</span>
-            </div>
-          </div>
         </div>
 
-        {/* Loudness Toggle (Placeholder) */}
-        <Button
-          variant="outline"
-          size="sm"
-          className="hidden md:flex border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800 gap-2 text-xs font-bold tracking-wider"
-        >
-          <Activity className="h-4 w-4" />
-          LOUDNESS MATCH OFF
-        </Button>
-      </div>
-
-      {/* Waveform Area (Placeholder) */}
-      <div className="relative h-24 bg-[#0a0b10] rounded-lg overflow-hidden border border-zinc-800/50 flex items-center justify-center group cursor-pointer">
-        {/* 這裡未來會是真的波形圖，現在先用 CSS 模擬一個假象 */}
-        <div className="absolute inset-0 flex items-center justify-center opacity-30 group-hover:opacity-50 transition-opacity">
-          {/* 產生一排假的波形條 */}
-          <div className="flex items-end gap-[2px] h-1/2 w-full px-4">
-            {Array.from({ length: 100 }).map((_, i) => {
-              // 隨機產生高度，模擬波形
-              const height = Math.max(10, Math.random() * 100);
-              return (
-                <div key={i} className="flex-1 bg-zinc-600 rounded-full" style={{ height: `${height}%` }}></div>
-              )
-            })}
+        {/* Waveform Area & Timeline Markers */}
+        <div className="relative h-24 bg-[#0a0b10] rounded-lg border border-zinc-800/50 group">
+          
+          {/* 1. 視覺波形 (背景層) */}
+          <div className="absolute inset-0 flex items-center justify-center opacity-30 group-hover:opacity-40 transition-opacity pointer-events-none">
+            <div className="flex items-end gap-[2px] h-1/2 w-full px-4">
+              {Array.from({ length: 100 }).map((_, i) => (
+                <div 
+                  key={i} 
+                  className={`flex-1 rounded-full ${((i/100) * duration < currentTime) ? 'bg-blue-500' : 'bg-zinc-600'}`} 
+                  style={{ height: `${20 + Math.random() * 80}%` }}
+                />
+              ))}
+            </div>
           </div>
+
+          {/* 2. 留言標籤層 (Markers) */}
+          <div className="absolute inset-0 px-4 pointer-events-none">
+            <div className="relative w-full h-full">
+              {comments.map((comment) => {
+                const position = (comment.timestamp / duration) * 100;
+                return (
+                  <div
+                    key={comment.id}
+                    className="absolute top-0 bottom-0 w-[2px] bg-blue-500/30 group-hover:bg-blue-500/50 transition-colors"
+                    style={{ left: `${position}%` }}
+                  >
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSeek(comment.timestamp);
+                          }}
+                          className="absolute top-2 -translate-x-1/2 p-1 bg-blue-600 hover:bg-white text-white hover:text-blue-600 rounded-full shadow-lg transition-all pointer-events-auto active:scale-90"
+                        >
+                          <MessageCircle className="w-3 h-3" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent className="bg-zinc-800 border-zinc-700 text-white text-[10px]">
+                        <p>{comment.content}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          
+          {/* 3. 進度條 Slider (最上層) */}
+          <Slider
+            value={[currentTime]}
+            max={duration || 100}
+            step={0.1}
+            className="absolute inset-0 z-30 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+            onValueChange={(val) => onSeek(val[0])}
+          />
+
+          {/* 4. 當前播放指示線 (視覺提示) */}
+          <div 
+            className="absolute top-0 bottom-0 w-[1px] bg-white z-20 pointer-events-none shadow-[0_0_8px_rgba(255,255,255,0.5)]"
+            style={{ left: `${(currentTime / duration) * 100}%` }}
+          />
+
+          {!currentVersionName && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-40">
+              <p className="text-zinc-400 font-medium">Select a version to start</p>
+            </div>
+          )}
         </div>
-        
-        {/* 進度條 Slider (疊在波形上面) */}
-        <Slider
-          defaultValue={[0]}
-          value={[currentTime]}
-          max={duration || 100}
-          step={0.1}
-          className="absolute inset-0 z-10 opacity-0 hover:opacity-100 transition-opacity cursor-pointer"
-          // 👇 3. 這裡把註解拿掉，實作 Seek 功能
-          onValueChange={(val) => onSeek(val[0])}
-        />
-
-        {/* 尚未選擇版本時的提示 */}
-        {!currentVersionName && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-20">
-            <p className="text-zinc-400 font-medium">Select a version to start</p>
-          </div>
-        )}
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
