@@ -1,74 +1,102 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { createClient } from "@/utils/supabase/client";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import { updateMemberProfile } from "@/app/actions/project-members"; // 稍後建立
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 
-export function OnboardingGuide({ member, user }: { member: any, user: any }) {
+// ✅ 這裡就是 page.tsx 缺少的介面定義
+interface OnboardingGuideProps {
+  projectId: string;
+  isNewMember: boolean;
+}
+
+export function OnboardingGuide({ projectId, isNewMember }: OnboardingGuideProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [displayName, setDisplayName] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const router = useRouter();
+  const supabase = createClient();
 
+  // 如果是新成員 (沒有暱稱)，就自動打開對話框
   useEffect(() => {
-    // 如果成員還沒有設定過 display_name，就開啟導引視窗
-    if (member && !member.display_name) {
-      setDisplayName(user?.user_metadata?.full_name || "");
+    if (isNewMember) {
       setIsOpen(true);
     }
-  }, [member, user]);
+  }, [isNewMember]);
 
-  const handleSave = async () => {
-    setLoading(true);
+  const handleSubmit = async () => {
+    if (!displayName.trim()) return;
+
+    setIsSubmitting(true);
     try {
-      await updateMemberProfile(member.id, {
-        display_name: displayName,
-        avatar_url: user?.user_metadata?.avatar_url,
-      });
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("No user found");
+
+      // 更新成員暱稱
+      const { error } = await supabase
+        .from("project_members")
+        .update({ display_name: displayName })
+        .eq("project_id", projectId)
+        .eq("user_id", user.id);
+
+      if (error) throw error;
+
+      toast.success("歡迎加入！");
       setIsOpen(false);
+      
+      // 刷新頁面，讓 Member List 立刻更新
+      router.refresh(); 
     } catch (error) {
-      console.error("Failed to update profile:", error);
+      console.error(error);
+      toast.error("設定失敗，請稍後再試");
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogContent className="sm:max-w-[425px] bg-[#12141c] border-zinc-800 text-white">
+      <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white" onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader>
-          <DialogTitle className="text-xl">歡迎加入專案！</DialogTitle>
+          <DialogTitle>歡迎來到這個專案！👋</DialogTitle>
           <DialogDescription className="text-zinc-400">
-            在開始協作之前，請確認你在專案中顯示的名稱。
+            初次見面，為了讓團隊協作更順暢，請輸入大家該如何稱呼您？
           </DialogDescription>
         </DialogHeader>
-        
-        <div className="flex flex-col items-center gap-6 py-4">
-          <Avatar className="w-20 h-20 border-2 border-blue-500">
-            <AvatarImage src={user?.user_metadata?.avatar_url} />
-            <AvatarFallback>{displayName?.[0]}</AvatarFallback>
-          </Avatar>
-          
-          <div className="w-full space-y-2">
-            <label className="text-sm text-zinc-500">顯示名稱 (其他成員會看到這個名稱)</label>
+        <div className="grid gap-4 py-4">
+          <div className="grid gap-2">
+            <Label htmlFor="name" className="text-zinc-300">
+              您的暱稱 (Display Name)
+            </Label>
             <Input
+              id="name"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="bg-zinc-900 border-zinc-700 text-white"
-              placeholder="例如：吉他手 小明"
+              placeholder="例如：Andrew, 吉他手小王"
+              className="bg-zinc-800 border-zinc-700 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+              autoFocus
             />
           </div>
         </div>
-
         <DialogFooter>
           <Button 
-            onClick={handleSave} 
-            disabled={loading || !displayName}
-            className="w-full bg-blue-600 hover:bg-blue-700"
+            onClick={handleSubmit} 
+            disabled={isSubmitting || !displayName.trim()}
+            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium"
           >
-            {loading ? "儲存中..." : "進入專案開始協作"}
+            {isSubmitting ? "儲存中..." : "開始協作"}
           </Button>
         </DialogFooter>
       </DialogContent>

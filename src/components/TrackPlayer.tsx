@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation"; 
 import { PlayerControls } from "./PlayerControls";
 import { VersionList } from "./VersionList";
-import { CommentInput } from "@/app/project/[id]/CommentInput"; // 請確認路徑正確
+import { CommentInput } from "@/app/project/[id]/CommentInput"; 
 import { createClient } from "@/utils/supabase/client";
 import { deleteComment, updateComment } from "@/app/actions/comments";
 import { MoreVertical, Pencil, Trash2, X, Check } from "lucide-react";
@@ -46,11 +47,15 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
+  // 待處理的跳轉時間
+  const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
+
   // 編輯狀態
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const searchParams = useSearchParams();
   const supabase = createClient();
 
   // 2. 獲取使用者
@@ -78,40 +83,75 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     fetchComments();
   }, [fetchComments]);
 
-  // 4. 音訊初始化
+  // 4. 監聽 URL 變化
   useEffect(() => {
-    if (currentVersion && audioRef.current && !audioRef.current.src) {
+    // A. 處理版本切換
+    const targetVersionId = searchParams.get("versionId");
+    if (targetVersionId && currentVersion?.id !== targetVersionId) {
+      const targetVersion = versions.find(v => v.id === targetVersionId);
+      if (targetVersion) {
+        console.log("🔄 URL Request: Switch to version", targetVersion.name);
+        setCurrentVersion(targetVersion);
+      }
+    }
+
+    // B. 處理時間跳轉 (存入 pendingSeekTime)
+    const targetCommentId = searchParams.get("commentId");
+    if (targetCommentId && comments.length > 0) {
+      const targetComment = comments.find(c => c.id === targetCommentId);
+      if (targetComment) {
+        console.log("📍 URL Request: Queue seek to", targetComment.timestamp);
+        setPendingSeekTime(targetComment.timestamp);
+      }
+    }
+  }, [searchParams, versions, comments, currentVersion]);
+
+  // ✅ 5. 執行跳轉 (只跳轉，不播放)
+  useEffect(() => {
+    if (pendingSeekTime !== null && audioRef.current) {
+      if (audioRef.current.readyState >= 1) {
+        console.log("⏩ Executing Seek (Paused) to:", pendingSeekTime);
+        
+        // 設定時間
+        audioRef.current.currentTime = pendingSeekTime;
+        setCurrentTime(pendingSeekTime);
+        
+        // ❌ 移除這行: audioRef.current.play()
+        // ✅ 改成強制暫停
+        audioRef.current.pause();
+        setIsPlaying(false);
+          
+        setPendingSeekTime(null);
+      } 
+    }
+  }, [pendingSeekTime, currentVersion]);
+
+
+  // 6. 音訊初始化
+  useEffect(() => {
+    if (currentVersion && audioRef.current) {
       const publicUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
       const cleanPath = currentVersion.storage_path.startsWith('/') 
         ? currentVersion.storage_path.slice(1) 
         : currentVersion.storage_path;
-      audioRef.current.src = `${publicUrl}/${cleanPath}`;
+      
+      const newSrc = `${publicUrl}/${cleanPath}`;
+      
+      if (audioRef.current.src !== newSrc && !audioRef.current.src.endsWith(newSrc)) {
+         audioRef.current.src = newSrc;
+      }
     }
   }, [currentVersion]);
 
-  // 5. 播放控制邏輯
+  // 7. 播放控制邏輯
   const handleVersionSelect = (version: Version) => {
-    const publicUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
-    const cleanPath = version.storage_path.startsWith('/') 
-      ? version.storage_path.slice(1) 
-      : version.storage_path;
-    const fullUrl = `${publicUrl}/${cleanPath}`;
-
-    if (audioRef.current) {
-      if (currentVersion?.id === version.id) {
+    if (currentVersion?.id === version.id) {
         togglePlayPause();
         return;
-      }
-      const wasPlaying = !audioRef.current.paused;
-      const currentPos = audioRef.current.currentTime;
-      audioRef.current.src = fullUrl;
-      audioRef.current.currentTime = currentPos;
-      if (wasPlaying) {
-        audioRef.current.play().catch(console.error);
-        setIsPlaying(true);
-      }
-      setCurrentVersion(version);
     }
+    setCurrentVersion(version);
+    // 切換版本時，我們也預設暫停，讓使用者自己點播放
+    setIsPlaying(false); 
   };
 
   const togglePlayPause = () => {
@@ -126,7 +166,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     }
   };
 
-  // 6. 編輯與刪除功能
   const handleDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
     try {
@@ -155,7 +194,17 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
       <audio
         ref={audioRef}
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+        // ✅ 修正：Metadata 載入後，若有指定時間，只跳轉不播放
+        onLoadedMetadata={(e) => {
+          setDuration(e.currentTarget.duration);
+          if (pendingSeekTime !== null) {
+            console.log("🔊 Metadata Loaded. Seeking (Paused)...", pendingSeekTime);
+            e.currentTarget.currentTime = pendingSeekTime;
+            // ❌ 移除 e.currentTarget.play()
+            setIsPlaying(false); 
+            setPendingSeekTime(null);
+          }
+        }}
         onEnded={() => setIsPlaying(false)}
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
@@ -207,84 +256,88 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
                 <p className="text-xs italic">尚無留言，標記你的第一個想法</p>
               </div>
             ) : (
-              comments.map(c => (
-                <div 
-                  key={c.id} 
-                  className={`p-3 rounded-lg border-l-4 transition-all ${
-                    editingId === c.id 
-                      ? "bg-zinc-800 border-blue-500" 
-                      : "bg-zinc-800/40 border-transparent border-l-blue-500 hover:bg-zinc-800"
-                  }`}
-                >
-                  <div className="flex justify-between items-start mb-2">
-                    {/* 時間戳記 (點擊跳轉) */}
-                    <button 
-                      onClick={() => handleSeek(c.timestamp)}
-                      className="text-[10px] font-mono text-blue-400 bg-blue-400/10 px-2 py-1 rounded border border-blue-400/20 active:scale-95 transition-transform"
-                    >
-                      {new Date(c.timestamp * 1000).toISOString().substr(14, 5)}
-                    </button>
-                    
-                    {/* 手機友善選單 (Dropdown Menu) - 只有本人看得到 */}
-                    {currentUserId === c.user_id && editingId !== c.id && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-zinc-500 hover:text-white">
-                            <MoreVertical className="w-4 h-4" />
+              comments.map(c => {
+                 const isTargetComment = searchParams.get("commentId") === c.id;
+
+                 return (
+                  <div 
+                    key={c.id} 
+                    id={`comment-${c.id}`}
+                    className={`p-3 rounded-lg border-l-4 transition-all ${
+                      editingId === c.id 
+                        ? "bg-zinc-800 border-blue-500" 
+                        : isTargetComment
+                          ? "bg-blue-900/30 border-blue-400 ring-1 ring-blue-500/50" 
+                          : "bg-zinc-800/40 border-transparent border-l-blue-500 hover:bg-zinc-800"
+                    }`}
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <button 
+                        onClick={() => handleSeek(c.timestamp)}
+                        className="text-[10px] font-mono text-blue-400 bg-blue-400/10 px-2 py-1 rounded border border-blue-400/20 active:scale-95 transition-transform"
+                      >
+                        {new Date(c.timestamp * 1000).toISOString().substr(14, 5)}
+                      </button>
+                      
+                      {currentUserId === c.user_id && editingId !== c.id && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-zinc-500 hover:text-white">
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
+                            <DropdownMenuItem 
+                              onClick={() => { setEditingId(c.id); setEditContent(c.content); }}
+                              className="cursor-pointer focus:bg-zinc-800 focus:text-white"
+                            >
+                              <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
+                            </DropdownMenuItem>
+                            <DropdownMenuItem 
+                              onClick={() => handleDelete(c.id)} 
+                              className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
+                            >
+                              <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
+
+                    {editingId === c.id ? (
+                      <div className="animate-in fade-in zoom-in-95 duration-200">
+                        <textarea 
+                          value={editContent} 
+                          onChange={(e) => setEditContent(e.target.value)}
+                          className="w-full bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-white focus:outline-none focus:border-blue-500 min-h-[80px] resize-none"
+                          autoFocus
+                        />
+                        <div className="flex justify-end gap-2 mt-2">
+                          <Button 
+                            size="sm" 
+                            variant="ghost" 
+                            onClick={() => setEditingId(null)}
+                            className="h-8 text-zinc-400 hover:text-white"
+                          >
+                            <X className="w-4 h-4 mr-1" /> 取消
                           </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
-                          <DropdownMenuItem 
-                            onClick={() => { setEditingId(c.id); setEditContent(c.content); }}
-                            className="cursor-pointer focus:bg-zinc-800 focus:text-white"
+                          <Button 
+                            size="sm" 
+                            onClick={() => handleUpdate(c.id)}
+                            className="h-8 bg-blue-600 hover:bg-blue-700 text-white"
                           >
-                            <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => handleDelete(c.id)} 
-                            className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
-                          >
-                            <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            <Check className="w-4 h-4 mr-1" /> 儲存
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
+                        {c.content}
+                      </p>
                     )}
                   </div>
-
-                  {/* 顯示模式 vs 編輯模式 */}
-                  {editingId === c.id ? (
-                    <div className="animate-in fade-in zoom-in-95 duration-200">
-                      <textarea 
-                        value={editContent} 
-                        onChange={(e) => setEditContent(e.target.value)}
-                        className="w-full bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-white focus:outline-none focus:border-blue-500 min-h-[80px] resize-none"
-                        autoFocus
-                      />
-                      <div className="flex justify-end gap-2 mt-2">
-                        <Button 
-                          size="sm" 
-                          variant="ghost" 
-                          onClick={() => setEditingId(null)}
-                          className="h-8 text-zinc-400 hover:text-white"
-                        >
-                          <X className="w-4 h-4 mr-1" /> 取消
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          onClick={() => handleUpdate(c.id)}
-                          className="h-8 bg-blue-600 hover:bg-blue-700 text-white"
-                        >
-                          <Check className="w-4 h-4 mr-1" /> 儲存
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
-                      {c.content}
-                    </p>
-                  )}
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

@@ -1,36 +1,40 @@
 "use server";
 
 import { createClient } from "@/utils/supabase/server";
-import { revalidatePath } from "next/cache";
 
 export interface NotificationItem {
   id: string;
   created_at: string;
-  sender_id: string;
-  project_id: string;
-  comment_id: string;
   is_read: boolean;
-  type: 'mention' | 'comment';
+  type: 'mention' | 'reply' | 'system';
   content_preview: string;
-  // 關聯資料 (透過 Supabase Join 撈取)
-  sender?: { email: string };
-  project?: { name: string };
+  project_id: string;
+  comment_id?: string;
+  sender_id: string;
+
+  track_id?: string; 
+  asset_id?: string;
+
+  // 我們手動組裝這個物件
+  sender?: {
+    display_name: string;
+    avatar_url?: string;
+  };
 }
 
-// 1. 獲取通知列表
-export async function getNotifications() {
+export async function getNotifications(): Promise<NotificationItem[]> {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) return [];
 
-  const { data, error } = await supabase
+  // ❌ 錯誤寫法 (會導致 PGRST200，請確保你沒有寫這一行)：
+  // .select("*, sender:sender_id(email)") 
+  
+  // ✅ 正確寫法：只抓通知本體
+  const { data: notifications, error } = await supabase
     .from("notifications")
-    .select(`
-      *,
-      sender:sender_id(email),
-      project:project_id(name)
-    `)
+    .select("*")
     .eq("receiver_id", user.id)
     .order("created_at", { ascending: false })
     .limit(20);
@@ -40,33 +44,49 @@ export async function getNotifications() {
     return [];
   }
 
-  return data as unknown as NotificationItem[];
+  if (!notifications || notifications.length === 0) {
+    return [];
+  }
+
+  // 2. "手動" 查詢發送者的暱稱 (避免關聯錯誤)
+  const enrichedNotifications = await Promise.all(
+    notifications.map(async (n) => {
+      // 去 project_members 表找這個人的名字
+      const { data: member } = await supabase
+        .from("project_members")
+        .select("display_name, avatar_url")
+        .eq("user_id", n.sender_id)
+        .eq("project_id", n.project_id) 
+        .single();
+
+      return {
+        ...n,
+        sender: {
+          display_name: member?.display_name || "未知成員",
+          avatar_url: member?.avatar_url,
+        },
+      };
+    })
+  );
+
+  return enrichedNotifications;
 }
 
-// 2. 標記單一通知為已讀
 export async function markAsRead(notificationId: string) {
   const supabase = await createClient();
-  const { error } = await supabase
-    .from("notifications")
-    .update({ is_read: true })
-    .eq("id", notificationId);
-
-  if (error) throw error;
-  
-  // 這裡不一定要 revalidatePath，因為通常是在 Client 端更新 UI 狀態
-}
-
-// 3. (選用) 一鍵全部已讀
-export async function markAllAsRead() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return;
-
   await supabase
     .from("notifications")
     .update({ is_read: true })
-    .eq("receiver_id", user.id)
-    .eq("is_read", false);
-    
-  revalidatePath("/");
+    .eq("id", notificationId);
+}
+
+export async function markAllAsRead() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .eq("receiver_id", user.id);
+  }
 }

@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 
 interface CommentInputProps {
-  projectId: string; // 新增：需要專案 ID 來撈取成員
+  projectId: string; // 必填：用於撈取成員與發送通知
   assetId: string;
   currentTime: number;
   onCommentSuccess: () => void;
@@ -26,16 +26,19 @@ export function CommentInput({ projectId, assetId, currentTime, onCommentSuccess
   const supabase = createClient();
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // 1. 初始撈取成員清單
+  // 1. 初始撈取成員清單 (用於 @選單)
   useEffect(() => {
     async function getMembers() {
+      if (!projectId) return;
+      
       const { data } = await supabase
         .from("project_members")
         .select("user_id, display_name")
         .eq("project_id", projectId);
+        
       if (data) setMembers(data);
     }
-    if (projectId) getMembers();
+    getMembers();
   }, [projectId, supabase]);
 
   // 2. 偵測 @ 符號邏輯
@@ -47,6 +50,7 @@ export function CommentInput({ projectId, assetId, currentTime, onCommentSuccess
     const lastWord = words[words.length - 1];
 
     if (lastWord.startsWith("@")) {
+      // 去掉 @ 符號，取得搜尋關鍵字
       setMentionFilter(lastWord.slice(1).toLowerCase());
       setShowMentions(true);
     } else {
@@ -57,6 +61,7 @@ export function CommentInput({ projectId, assetId, currentTime, onCommentSuccess
   // 3. 選取成員後的處理
   const insertMention = (displayName: string) => {
     const words = content.split(" ");
+    // 替換最後一個字 (也就是 @...) 為完整的標記
     words[words.length - 1] = `@${displayName} `;
     setContent(words.join(" "));
     setShowMentions(false);
@@ -69,15 +74,19 @@ export function CommentInput({ projectId, assetId, currentTime, onCommentSuccess
 
     setIsSubmitting(true);
     try {
+      // ✅ 關鍵修正：必須傳入 project_id，後端通知系統才找得到人
       await createComment({
         content,
         timestamp: currentTime,
         asset_id: assetId,
+        project_id: projectId, 
       });
+
       setContent("");
       toast.success("留言已送出");
-      onCommentSuccess();
+      onCommentSuccess(); // 通知父元件刷新留言列表
     } catch (error) {
+      console.error(error);
       toast.error("留言失敗");
     } finally {
       setIsSubmitting(false);
@@ -87,12 +96,12 @@ export function CommentInput({ projectId, assetId, currentTime, onCommentSuccess
   return (
     <div className="relative w-full">
       {/* 成員標記彈出選單 */}
-      {showMentions && (
+      {showMentions && members.length > 0 && (
         <div className="absolute bottom-full mb-2 w-full max-w-[240px] bg-zinc-900 border border-zinc-800 rounded-lg shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2">
           <div className="p-2 border-b border-zinc-800 flex items-center gap-2 text-[10px] text-zinc-500 font-bold uppercase tracking-wider bg-zinc-950/50">
             <AtSign className="w-3 h-3" /> Mention Member
           </div>
-          <div className="max-h-40 overflow-y-auto">
+          <div className="max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700">
             {members
               .filter(m => m.display_name?.toLowerCase().includes(mentionFilter))
               .map(member => (
@@ -100,20 +109,27 @@ export function CommentInput({ projectId, assetId, currentTime, onCommentSuccess
                   key={member.user_id}
                   type="button"
                   onClick={() => insertMention(member.display_name)}
-                  className="w-full px-3 py-2 text-left text-xs text-zinc-300 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-2 border-b border-zinc-800/50 last:border-0"
+                  className="w-full px-3 py-2 text-left text-xs text-zinc-300 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-2 border-b border-zinc-800/50 last:border-0 group"
                 >
-                  <div className="w-5 h-5 bg-zinc-800 rounded-full flex items-center justify-center text-[10px] font-bold text-blue-400 group-hover:bg-blue-500 group-hover:text-white">
-                    {member.display_name?.[0]}
+                  <div className="w-5 h-5 bg-zinc-800 rounded-full flex items-center justify-center text-[10px] font-bold text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                    {(member.display_name?.[0] || "?").toUpperCase()}
                   </div>
-                  {member.display_name}
+                  {member.display_name || "未命名成員"}
                 </button>
               ))}
+              {/* 如果搜尋不到人 */}
+              {members.filter(m => m.display_name?.toLowerCase().includes(mentionFilter)).length === 0 && (
+                <div className="p-3 text-xs text-zinc-500 text-center">
+                  找不到成員
+                </div>
+              )}
           </div>
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="relative group">
         <div className="flex items-center gap-2 p-2 bg-zinc-900 border border-zinc-800 rounded-lg focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all shadow-inner">
+          {/* 時間戳記顯示 */}
           <div className="flex items-center gap-1 px-2 py-1 bg-blue-500/10 rounded text-blue-400 text-xs font-mono border border-blue-500/20">
             <Clock className="w-3 h-3" />
             {new Date(currentTime * 1000).toISOString().substr(14, 5)}
@@ -124,7 +140,7 @@ export function CommentInput({ projectId, assetId, currentTime, onCommentSuccess
             value={content}
             onChange={handleInputChange}
             placeholder="輸入 @ 標記團員想法..."
-            className="flex-1 bg-transparent border-none focus-visible:ring-0 text-sm placeholder:text-zinc-600"
+            className="flex-1 bg-transparent border-none focus-visible:ring-0 text-sm placeholder:text-zinc-600 px-2"
           />
           
           <Button 
