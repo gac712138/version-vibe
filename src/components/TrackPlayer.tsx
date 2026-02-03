@@ -47,9 +47,9 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // ✅ 新增：控制跳轉後的行為
+  // 控制跳轉後的行為
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
-  const [shouldPlayAfterSeek, setShouldPlayAfterSeek] = useState(false); // true=續播, false=暫停
+  const [shouldPlayAfterSeek, setShouldPlayAfterSeek] = useState(false);
 
   // 編輯狀態
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -86,7 +86,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
 
   // 4. 監聽 URL 變化 (通知跳轉)
   useEffect(() => {
-    // A. 處理版本切換
     const targetVersionId = searchParams.get("versionId");
     if (targetVersionId && currentVersion?.id !== targetVersionId) {
       const targetVersion = versions.find(v => v.id === targetVersionId);
@@ -95,19 +94,18 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
       }
     }
 
-    // B. 處理時間跳轉 (來自通知)//
     const targetCommentId = searchParams.get("commentId");
     if (targetCommentId && comments.length > 0) {
       const targetComment = comments.find(c => c.id === targetCommentId);
       if (targetComment) {
         console.log("📍 通知跳轉: 準備跳至", targetComment.timestamp);
         setPendingSeekTime(targetComment.timestamp);
-        setShouldPlayAfterSeek(false); // 🔔 通知點進來 -> 跳轉後暫停
+        setShouldPlayAfterSeek(false); // 通知點進來 -> 跳轉後暫停
       }
     }
   }, [searchParams, versions, comments, currentVersion]);
 
-  // 5. 音訊初始化
+  // 5. 音訊初始化 (修正手機版載入問題)
   useEffect(() => {
     if (currentVersion && audioRef.current) {
       const publicUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
@@ -117,30 +115,35 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
       
       const newSrc = `${publicUrl}/${cleanPath}`;
       
+      // 只有當 src 真的改變時才執行
       if (audioRef.current.src !== newSrc && !audioRef.current.src.endsWith(newSrc)) {
          audioRef.current.src = newSrc;
+         
+         // ✅ 關鍵修正：在手機上切換 src 後，必須手動觸發 load()
+         // 否則 onLoadedMetadata 不會觸發，導致無法恢復秒數
+         audioRef.current.load();
       }
     }
   }, [currentVersion]);
 
-  // ✅ 6. 切換版本邏輯 (修正手機版無法記憶秒數的問題)
+  // 6. 切換版本邏輯
   const handleVersionSelect = (version: Version) => {
     if (currentVersion?.id === version.id) {
         togglePlayPause();
         return;
     }
 
-    // 1. 先把當前的秒數存起來
+    // 1. 記憶當前秒數
     if (audioRef.current) {
         const currentPos = audioRef.current.currentTime;
         console.log("🔄 切換版本，記憶秒數:", currentPos);
         setPendingSeekTime(currentPos);
         
-        // 2. 如果原本正在播，切換後就繼續播；原本暫停就維持暫停
+        // 2. 記憶播放狀態 (如果原本在播，切過去也要繼續播)
         setShouldPlayAfterSeek(isPlaying); 
     }
 
-    // 3. 切換版本 (這會觸發 useEffect 更新 src)
+    // 3. 切換版本
     setCurrentVersion(version);
   };
 
@@ -156,7 +159,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     }
   };
 
-  // ... (刪除與更新留言邏輯保持不變)
   const handleDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
     try {
@@ -182,30 +184,34 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-20">
+      {/* ✅ 關鍵修正：加入 preload="auto" */}
       <audio
         ref={audioRef}
+        preload="auto"
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-        // ✅ 關鍵修正：Metadata 載入完成後，執行「恢復秒數」與「決定是否播放」
         onLoadedMetadata={(e) => {
           setDuration(e.currentTarget.duration);
           
+          // 當 Metadata 載入完成 (包含手機 load() 後)，執行恢復邏輯
           if (pendingSeekTime !== null) {
-            console.log(`🔊 恢復播放狀態: ${pendingSeekTime}s, 自動播放: ${shouldPlayAfterSeek}`);
+            console.log(`🔊 恢復播放狀態: ${pendingSeekTime}s`);
             
             // 1. 恢復秒數
             e.currentTarget.currentTime = pendingSeekTime;
             
-            // 2. 根據情境決定播放或暫停
+            // 2. 恢復播放狀態
             if (shouldPlayAfterSeek) {
-                e.currentTarget.play()
-                    .then(() => setIsPlaying(true))
-                    .catch(err => console.warn("Autoplay prevented:", err));
+                const playPromise = e.currentTarget.play();
+                if (playPromise !== undefined) {
+                    playPromise
+                        .then(() => setIsPlaying(true))
+                        .catch(err => console.warn("Autoplay blocked:", err));
+                }
             } else {
                 e.currentTarget.pause();
                 setIsPlaying(false);
             }
 
-            // 3. 重置狀態
             setPendingSeekTime(null);
           }
         }}
@@ -214,7 +220,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
         onPause={() => setIsPlaying(false)}
       />
 
-      {/* 以下 UI 保持不變 */}
       <div className="relative">
         <PlayerControls
           isPlaying={isPlaying}
