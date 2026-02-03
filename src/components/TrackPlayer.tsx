@@ -95,7 +95,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
       }
     }
 
-    // B. 處理時間跳轉 (來自通知)
+    // B. 處理時間跳轉 (來自通知)//
     const targetCommentId = searchParams.get("commentId");
     if (targetCommentId && comments.length > 0) {
       const targetComment = comments.find(c => c.id === targetCommentId);
