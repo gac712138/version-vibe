@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Play, Pause, Activity, MessageCircle } from "lucide-react";
+import { Play, Pause, MessageCircle } from "lucide-react"; // 移除 Activity (因為按鈕刪掉了)
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface Comment {
@@ -18,7 +18,7 @@ interface PlayerControlsProps {
   currentTime: number;
   duration: number;
   onSeek: (value: number) => void;
-  comments?: Comment[]; // 👈 新增：接收留言數據
+  comments?: Comment[];
 }
 
 function formatTime(seconds: number) {
@@ -35,12 +35,16 @@ export function PlayerControls({
   currentTime,
   duration,
   onSeek,
-  comments = [], // 預設為空陣列
+  comments = [],
 }: PlayerControlsProps) {
   return (
     <TooltipProvider>
-      <div className="bg-[#12141c] rounded-t-xl p-6 border-b border-zinc-800/50">
-        {/* Top Bar: Controls & Metadata (保持不變) */}
+      {/* ✨ 修改重點：
+         1. 移除了 bg-[#12141c], border, p-6
+         2. 改為 w-full，讓它變成一個純粹的內容元件，外觀由 TrackPlayer 的卡片決定
+      */}
+      <div className="w-full">
+        {/* Top Bar: Controls & Metadata */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-6">
             <Button
@@ -69,14 +73,8 @@ export function PlayerControls({
             </div>
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="hidden md:flex border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800 gap-2 text-xs font-bold tracking-wider"
-          >
-            <Activity className="h-4 w-4" />
-            LOUDNESS MATCH OFF
-          </Button>
+          {/* 🗑️ 已移除：Loudness Match Off 按鈕
+          */}
         </div>
 
         {/* Waveform Area & Timeline Markers */}

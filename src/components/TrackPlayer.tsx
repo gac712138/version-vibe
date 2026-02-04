@@ -7,7 +7,7 @@ import { VersionList } from "./VersionList";
 import { CommentInput } from "@/app/project/[id]/CommentInput"; 
 import { createClient } from "@/utils/supabase/client";
 import { deleteComment, updateComment } from "@/app/actions/comments";
-import { updateAssetName, deleteAsset } from "@/app/actions/assets"; // 👈 引入新 Action
+import { updateAssetName, deleteAsset } from "@/app/actions/assets"; 
 import { MoreVertical, Pencil, Trash2, X, Check, MoreHorizontal, Edit } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -50,33 +50,24 @@ interface TrackPlayerProps {
 }
 
 export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
+  // ... (State 和 Hook 邏輯保持不變，直接沿用即可)
   const router = useRouter();
-  
-  // 1. 核心狀態
   const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [comments, setComments] = useState<Comment[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-
-  // 控制跳轉後的行為
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [shouldPlayAfterSeek, setShouldPlayAfterSeek] = useState(false);
-
-  // 留言編輯狀態
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
-
-  // ✅ Asset 編輯狀態 (Rename)
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [newName, setNewName] = useState("");
-
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const searchParams = useSearchParams();
   const supabase = createClient();
 
-  // 2. 獲取使用者
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -85,7 +76,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     getUser();
   }, [supabase]);
 
-  // 3. 獲取留言
   const fetchComments = useCallback(async () => {
     if (!currentVersion) return;
     const { data, error } = await supabase
@@ -101,38 +91,29 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     fetchComments();
   }, [fetchComments]);
 
-  // 4. 監聽 URL 變化 (通知跳轉)
   useEffect(() => {
     const targetVersionId = searchParams.get("versionId");
-    // 確保 versions 裡真的有這個 ID 才切換，避免被刪除的 ID 導致錯誤
     if (targetVersionId && currentVersion?.id !== targetVersionId) {
       const targetVersion = versions.find(v => v.id === targetVersionId);
-      if (targetVersion) {
-        setCurrentVersion(targetVersion);
-      }
+      if (targetVersion) setCurrentVersion(targetVersion);
     }
-
     const targetCommentId = searchParams.get("commentId");
     if (targetCommentId && comments.length > 0) {
       const targetComment = comments.find(c => c.id === targetCommentId);
       if (targetComment) {
-        console.log("📍 通知跳轉: 準備跳至", targetComment.timestamp);
         setPendingSeekTime(targetComment.timestamp);
         setShouldPlayAfterSeek(false); 
       }
     }
   }, [searchParams, versions, comments, currentVersion]);
 
-  // 5. 音訊初始化
   useEffect(() => {
     if (currentVersion && audioRef.current) {
       const publicUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
       const cleanPath = currentVersion.storage_path.startsWith('/') 
         ? currentVersion.storage_path.slice(1) 
         : currentVersion.storage_path;
-      
       const newSrc = `${publicUrl}/${cleanPath}`;
-      
       if (audioRef.current.src !== newSrc && !audioRef.current.src.endsWith(newSrc)) {
          audioRef.current.src = newSrc;
          audioRef.current.load();
@@ -140,7 +121,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     }
   }, [currentVersion]);
 
-  // 6. 切換版本邏輯
   const handleVersionSelect = (version: Version) => {
     if (currentVersion?.id === version.id) {
         togglePlayPause();
@@ -166,7 +146,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     }
   };
 
-  // --- 留言操作 (保持不變) ---
   const handleCommentDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
     try {
@@ -190,15 +169,13 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     }
   };
 
-  // --- ✅ Asset (版本) 操作 ---
-
   const handleRenameAsset = async () => {
     if (!currentVersion || !newName.trim()) return;
     try {
       await updateAssetName(projectId, currentVersion.id, newName);
       toast.success("版本名稱已更新");
       setIsRenameDialogOpen(false);
-      router.refresh(); // 重新整理以更新列表
+      router.refresh();
     } catch (error) {
       console.error(error);
       toast.error("更新失敗");
@@ -207,20 +184,13 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
 
   const handleDeleteAsset = async () => {
     if (!currentVersion) return;
-    if (!confirm(`確定要刪除版本 "${currentVersion.name}" 嗎？此操作無法復原，且所有相關留言也會被刪除。`)) return;
-
+    if (!confirm(`確定要刪除版本 "${currentVersion.name}" 嗎？此操作無法復原。`)) return;
     try {
       await deleteAsset(projectId, currentVersion.id);
       toast.success("版本已刪除");
-      
-      // 刪除後，切換到列表中的第一個版本 (如果還有)
       const remaining = versions.filter(v => v.id !== currentVersion.id);
-      if (remaining.length > 0) {
-        setCurrentVersion(remaining[0]);
-      } else {
-        // 如果刪光了，重新整理讓 Server Component 處理空狀態
-        router.refresh();
-      }
+      if (remaining.length > 0) setCurrentVersion(remaining[0]);
+      else router.refresh();
       router.refresh();
     } catch (error) {
       console.error(error);
@@ -229,7 +199,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-20">
+    <div className="max-w-6xl mx-auto space-y-6 pb-20">
       <audio
         ref={audioRef}
         preload="auto"
@@ -240,9 +210,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
             e.currentTarget.currentTime = pendingSeekTime;
             if (shouldPlayAfterSeek) {
                 const playPromise = e.currentTarget.play();
-                if (playPromise !== undefined) {
-                    playPromise.then(() => setIsPlaying(true)).catch(console.warn);
-                }
+                if (playPromise !== undefined) playPromise.then(() => setIsPlaying(true)).catch(console.warn);
             } else {
                 e.currentTarget.pause();
                 setIsPlaying(false);
@@ -255,73 +223,88 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
         onPause={() => setIsPlaying(false)}
       />
 
-      {/* ✅ 新增：版本資訊與操作標題列 */}
-      <div className="flex items-end justify-between px-2">
-        <div>
-           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+      {/* 1. Header: 純文字標題區 (按鈕移走) */}
+      <div className="px-2">
+         <div className="flex items-center gap-3 mb-1">
+           <h2 className="text-2xl font-bold text-white truncate">
              {currentVersion?.name}
-             <span className="text-sm font-normal text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded-full border border-zinc-800">
-               v{currentVersion?.version_number}
-             </span>
            </h2>
-           <p className="text-xs text-zinc-500 mt-1">
-             Created at {currentVersion && new Date(currentVersion.created_at).toLocaleDateString()}
-           </p>
-        </div>
-
-        {/* 版本操作選單 */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white">
-              <MoreHorizontal className="w-5 h-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
-            <DropdownMenuItem 
-              onClick={() => {
-                if (currentVersion) {
-                  setNewName(currentVersion.name);
-                  setIsRenameDialogOpen(true);
-                }
-              }}
-              className="cursor-pointer focus:bg-zinc-800 focus:text-white"
-            >
-              <Edit className="mr-2 h-4 w-4" /> 重新命名
-            </DropdownMenuItem>
-            <DropdownMenuSeparator className="bg-zinc-800" />
-            <DropdownMenuItem 
-              onClick={handleDeleteAsset}
-              className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
-            >
-              <Trash2 className="mr-2 h-4 w-4" /> 刪除版本
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+           <span className="shrink-0 text-xs font-mono text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+             v{currentVersion?.version_number}
+           </span>
+         </div>
+         <p className="text-xs text-zinc-500">
+           Created at {currentVersion && new Date(currentVersion.created_at).toLocaleDateString()}
+         </p>
       </div>
 
-      <div className="relative">
-        <PlayerControls
-          isPlaying={isPlaying}
-          onPlayPauseToggle={togglePlayPause}
-          currentVersionName={currentVersion?.name}
-          currentTime={currentTime}
-          duration={duration}
-          onSeek={handleSeek}
-          comments={comments} 
-        />
-      </div>
+      {/* 2. 主要佈局 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* 左側：整合式播放器卡片 */}
+        <div className="lg:col-span-2">
+           {/* 卡片容器：設定 relative 以便定位右上角按鈕 */}
+           <div className="relative bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+              
+              {/* ✨ A. 右上角操作按鈕 (Absolute Position) */}
+              <div className="absolute top-6 right-6 z-20">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-full">
+                      <MoreHorizontal className="w-5 h-5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
+                    <DropdownMenuItem 
+                      onClick={() => {
+                        if (currentVersion) {
+                          setNewName(currentVersion.name);
+                          setIsRenameDialogOpen(true);
+                        }
+                      }}
+                      className="cursor-pointer focus:bg-zinc-800 focus:text-white"
+                    >
+                      <Edit className="mr-2 h-4 w-4" /> 重新命名
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator className="bg-zinc-800" />
+                    <DropdownMenuItem 
+                      onClick={handleDeleteAsset}
+                      className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" /> 刪除版本
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <div className="md:col-span-2 space-y-6">
-          <VersionList
-            versions={versions}
-            currentVersionId={currentVersion?.id || null}
-            isPlaying={isPlaying}
-            onVersionSelect={handleVersionSelect}
-          />
+              {/* ✨ B. 播放器核心 (加 padding，避免內容貼邊) */}
+              <div className="p-6 pb-2">
+                <PlayerControls
+                  isPlaying={isPlaying}
+                  onPlayPauseToggle={togglePlayPause}
+                  currentVersionName={currentVersion?.name}
+                  currentTime={currentTime}
+                  duration={duration}
+                  onSeek={handleSeek}
+                  comments={comments} 
+                />
+              </div>
+
+              {/* ✨ C. 底部下拉選單 (Footer 樣式) */}
+              <div className="px-6 pb-6 pt-2">
+                <VersionList
+                  versions={versions}
+                  currentVersionId={currentVersion?.id || null}
+                  isPlaying={isPlaying}
+                  onVersionSelect={handleVersionSelect}
+                  className="w-full"
+                />
+              </div>
+
+           </div>
         </div>
         
-        {/* 留言區域 */}
+        {/* 右側：留言區 (保持不變) */}
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 flex flex-col h-[600px] shadow-2xl">
           <div className="flex items-center justify-between mb-4 px-1">
             <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">留言反饋</h3>

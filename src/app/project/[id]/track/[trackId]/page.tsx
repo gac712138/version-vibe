@@ -1,7 +1,7 @@
 import { createClient } from "@/utils/supabase/server";
 import { notFound, redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, FileAudio } from "lucide-react"; // 記得保留用到的圖示
+import { ArrowLeft, FileAudio } from "lucide-react"; 
 import Link from "next/link";
 import { UploadVersionBtn } from "@/components/UploadVersionBtn";
 import { TrackPlayer } from "@/components/TrackPlayer";
@@ -35,7 +35,7 @@ export default async function TrackPage({ params }: TrackPageProps) {
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
-      {/* Header (保持不變) */}
+      {/* Header */}
       <header className="border-b border-zinc-800 bg-zinc-950/50 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-4">
@@ -46,11 +46,11 @@ export default async function TrackPage({ params }: TrackPageProps) {
             </Link>
             
             <div className="flex flex-col">
-              <div className="flex items-center gap-2 text-xs text-zinc-500 mb-0.5">
+              {/* ✅ 修改這裡：移除了 "/ Track 0" */}
+              <div className="text-xs text-zinc-500 mb-0.5">
                 <span>{track.projects?.name}</span>
-                <span>/</span>
-                <span>Track {track.sort_order || 0}</span>
               </div>
+              
               <h1 className="text-lg font-bold flex items-center gap-2">
                 {track.name}
               </h1>
@@ -67,9 +67,8 @@ export default async function TrackPage({ params }: TrackPageProps) {
       <main className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-8">
         
         {versions.length === 0 ? (
-          /* Empty State (保持不變) */
+          /* Empty State */
           <div className="flex flex-col items-center justify-center py-32 text-center space-y-6 border border-dashed border-zinc-800 rounded-2xl bg-zinc-900/20">
-             {/* ... 這裡保留原本的 Empty State 代碼 ... */}
              <div className="relative">
               <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full" />
               <div className="relative p-6 bg-zinc-900 rounded-full ring-1 ring-zinc-800">
@@ -82,13 +81,11 @@ export default async function TrackPage({ params }: TrackPageProps) {
                 Upload a WAV or MP3 file to create Version 1.
               </p>
             </div>
-            {/* 這裡也可以放 Upload 按鈕 */}
              <div className="mt-4">
                <UploadVersionBtn projectId={id} trackId={trackId} />
              </div>
           </div>
         ) : (
-          /* 把原本的 map 列表換成我們的播放器元件 */
           <TrackPlayer projectId={id} versions={versions} />
         )}
       </main>

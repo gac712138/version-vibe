@@ -1,111 +1,77 @@
 "use client";
 
-import { cn } from "@/lib/utils";
-import { Clock, MoreVertical, BarChart2 } from "lucide-react";
-import { Button } from "./ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Clock } from "lucide-react";
 
 interface Version {
   id: string;
   version_number: number;
   name: string;
   created_at: string;
-  storage_path: string;
-  // 這裡未來會加上 lufs, tp 等真實資料
+  storage_path: string; 
 }
 
 interface VersionListProps {
   versions: Version[];
   currentVersionId: string | null;
-  isPlaying: boolean;
   onVersionSelect: (version: Version) => void;
+  isPlaying: boolean;
+  className?: string; // 👈 新增 className 屬性
 }
 
 export function VersionList({
   versions,
   currentVersionId,
-  isPlaying,
   onVersionSelect,
+  className = "", // 預設為空字串
 }: VersionListProps) {
+  
+  const handleValueChange = (value: string) => {
+    const selectedVersion = versions.find((v) => v.id === value);
+    if (selectedVersion) {
+      onVersionSelect(selectedVersion);
+    }
+  };
+
   return (
-    <div className="bg-[#0d0e14] p-4 rounded-b-xl border border-t-0 border-zinc-800/50">
-      <h2 className="text-zinc-500 text-xs font-bold uppercase tracking-wider mb-4 px-2">
-        Versions
-      </h2>
-      <div className="grid gap-3">
-        {versions.map((version) => {
-          const isSelected = currentVersionId === version.id;
-
-          return (
-            <div
-              key={version.id}
-              onClick={() => onVersionSelect(version)}
-              // 使用 cn 來動態組合樣式，實現選中時的紫色邊框效果
-              className={cn(
-                "group flex justify-between items-center p-3 rounded-lg border transition-all cursor-pointer relative overflow-hidden",
-                isSelected
-                  ? "bg-[#1a1b26] border-[#3D3DFF]/50 shadow-[inset_0_0_0_1px_rgba(61,61,255,0.2)]"
-                  : "bg-[#12141c] border-zinc-800/60 hover:bg-[#161821] hover:border-zinc-700"
-              )}
+    // 移除原本的 max-w 限制，改用 w-full 並允許外部 className 覆蓋
+    <div className={`w-full ${className}`}>
+      <Select value={currentVersionId || ""} onValueChange={handleValueChange}>
+        <SelectTrigger className="w-full bg-zinc-900 border-zinc-800 text-zinc-200 focus:ring-blue-600 h-10">
+          <SelectValue placeholder="選擇版本" />
+        </SelectTrigger>
+        <SelectContent className="bg-zinc-900 border-zinc-800 text-zinc-200">
+          {versions.map((version) => (
+            <SelectItem 
+              key={version.id} 
+              value={version.id}
+              className="focus:bg-zinc-800 focus:text-white cursor-pointer"
             >
-              {/* 選中時左側的紫色光條 */}
-              {isSelected && (
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-[#3D3DFF]" />
-              )}
-
-              <div className="flex items-center gap-4 ml-2">
-                {/* 版本號 Badge */}
-                <div
-                  className={cn(
-                    "h-8 w-10 rounded flex items-center justify-center font-mono font-bold text-sm",
-                    isSelected
-                      ? "bg-[#3D3DFF] text-white"
-                      : "bg-zinc-800 text-zinc-400 group-hover:bg-zinc-700 group-hover:text-zinc-300"
-                  )}
-                >
-                  V{version.version_number}
-                </div>
-
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p
-                      className={cn(
-                        "font-bold text-base",
-                        isSelected ? "text-white" : "text-zinc-300"
-                      )}
-                    >
-                      {version.name}
-                    </p>
-                    <span className="text-zinc-600 mx-1">•</span>
-                    <span className="text-xs text-zinc-500 flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {new Date(version.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-                  
-                  {/* Loudness Stats (Placeholder Data) */}
-                  <div className="flex items-center gap-4 mt-1 text-xs font-mono font-medium text-zinc-500">
-                    {/* 這裡未來要放真實資料 */}
-                    <span className={isSelected ? "text-blue-300/70" : ""}>I: -14.5 LUFS</span>
-                    <span className={isSelected ? "text-blue-300/70" : ""}>TP: -0.5</span>
-                  </div>
+              <div className="flex items-center justify-between w-full gap-4">
+                <span className="font-medium truncate">
+                  {version.name}
+                </span>
+                <div className="flex items-center gap-2 text-xs text-zinc-500">
+                  <Badge variant="outline" className="border-zinc-700 text-zinc-400 h-5 px-1.5 hidden sm:inline-flex">
+                    v{version.version_number}
+                  </Badge>
+                  <span className="hidden sm:flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    {new Date(version.created_at).toLocaleDateString()}
+                  </span>
                 </div>
               </div>
-
-              <div className="flex items-center gap-3">
-                {/* 播放中的動態圖示 */}
-                {isSelected && isPlaying && (
-                   <BarChart2 className="h-5 w-5 text-[#3D3DFF] animate-pulse" />
-                )}
-
-                {/* 更多選項按鈕 */}
-                <Button variant="ghost" size="icon" className="text-zinc-600 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                    <MoreVertical className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
