@@ -1,21 +1,32 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useSearchParams } from "next/navigation"; 
+import { useSearchParams, useRouter } from "next/navigation"; 
 import { PlayerControls } from "./PlayerControls";
 import { VersionList } from "./VersionList";
 import { CommentInput } from "@/app/project/[id]/CommentInput"; 
 import { createClient } from "@/utils/supabase/client";
 import { deleteComment, updateComment } from "@/app/actions/comments";
-import { MoreVertical, Pencil, Trash2, X, Check } from "lucide-react";
+import { updateAssetName, deleteAsset } from "@/app/actions/assets"; // 👈 引入新 Action
+import { MoreVertical, Pencil, Trash2, X, Check, MoreHorizontal, Edit } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogClose,
+} from "@/components/ui/dialog";
 
 interface Version {
   id: string;
@@ -39,6 +50,8 @@ interface TrackPlayerProps {
 }
 
 export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
+  const router = useRouter();
+  
   // 1. 核心狀態
   const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -51,9 +64,13 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [shouldPlayAfterSeek, setShouldPlayAfterSeek] = useState(false);
 
-  // 編輯狀態
+  // 留言編輯狀態
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
+
+  // ✅ Asset 編輯狀態 (Rename)
+  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
+  const [newName, setNewName] = useState("");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const searchParams = useSearchParams();
@@ -87,6 +104,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
   // 4. 監聽 URL 變化 (通知跳轉)
   useEffect(() => {
     const targetVersionId = searchParams.get("versionId");
+    // 確保 versions 裡真的有這個 ID 才切換，避免被刪除的 ID 導致錯誤
     if (targetVersionId && currentVersion?.id !== targetVersionId) {
       const targetVersion = versions.find(v => v.id === targetVersionId);
       if (targetVersion) {
@@ -100,12 +118,12 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
       if (targetComment) {
         console.log("📍 通知跳轉: 準備跳至", targetComment.timestamp);
         setPendingSeekTime(targetComment.timestamp);
-        setShouldPlayAfterSeek(false); // 通知點進來 -> 跳轉後暫停
+        setShouldPlayAfterSeek(false); 
       }
     }
   }, [searchParams, versions, comments, currentVersion]);
 
-  // 5. 音訊初始化 (修正手機版載入問題)
+  // 5. 音訊初始化
   useEffect(() => {
     if (currentVersion && audioRef.current) {
       const publicUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
@@ -115,12 +133,8 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
       
       const newSrc = `${publicUrl}/${cleanPath}`;
       
-      // 只有當 src 真的改變時才執行
       if (audioRef.current.src !== newSrc && !audioRef.current.src.endsWith(newSrc)) {
          audioRef.current.src = newSrc;
-         
-         // ✅ 關鍵修正：在手機上切換 src 後，必須手動觸發 load()
-         // 否則 onLoadedMetadata 不會觸發，導致無法恢復秒數
          audioRef.current.load();
       }
     }
@@ -132,18 +146,11 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
         togglePlayPause();
         return;
     }
-
-    // 1. 記憶當前秒數
     if (audioRef.current) {
         const currentPos = audioRef.current.currentTime;
-        console.log("🔄 切換版本，記憶秒數:", currentPos);
         setPendingSeekTime(currentPos);
-        
-        // 2. 記憶播放狀態 (如果原本在播，切過去也要繼續播)
         setShouldPlayAfterSeek(isPlaying); 
     }
-
-    // 3. 切換版本
     setCurrentVersion(version);
   };
 
@@ -159,7 +166,8 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     }
   };
 
-  const handleDelete = async (id: string) => {
+  // --- 留言操作 (保持不變) ---
+  const handleCommentDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
     try {
       await deleteComment(id);
@@ -170,7 +178,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     }
   };
 
-  const handleUpdate = async (id: string) => {
+  const handleCommentUpdate = async (id: string) => {
     if (!editContent.trim()) return;
     try {
       await updateComment(id, editContent);
@@ -182,36 +190,63 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
     }
   };
 
+  // --- ✅ Asset (版本) 操作 ---
+
+  const handleRenameAsset = async () => {
+    if (!currentVersion || !newName.trim()) return;
+    try {
+      await updateAssetName(projectId, currentVersion.id, newName);
+      toast.success("版本名稱已更新");
+      setIsRenameDialogOpen(false);
+      router.refresh(); // 重新整理以更新列表
+    } catch (error) {
+      console.error(error);
+      toast.error("更新失敗");
+    }
+  };
+
+  const handleDeleteAsset = async () => {
+    if (!currentVersion) return;
+    if (!confirm(`確定要刪除版本 "${currentVersion.name}" 嗎？此操作無法復原，且所有相關留言也會被刪除。`)) return;
+
+    try {
+      await deleteAsset(projectId, currentVersion.id);
+      toast.success("版本已刪除");
+      
+      // 刪除後，切換到列表中的第一個版本 (如果還有)
+      const remaining = versions.filter(v => v.id !== currentVersion.id);
+      if (remaining.length > 0) {
+        setCurrentVersion(remaining[0]);
+      } else {
+        // 如果刪光了，重新整理讓 Server Component 處理空狀態
+        router.refresh();
+      }
+      router.refresh();
+    } catch (error) {
+      console.error(error);
+      toast.error("刪除失敗");
+    }
+  };
+
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-20">
-      {/* ✅ 關鍵修正：加入 preload="auto" */}
       <audio
         ref={audioRef}
         preload="auto"
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
         onLoadedMetadata={(e) => {
           setDuration(e.currentTarget.duration);
-          
-          // 當 Metadata 載入完成 (包含手機 load() 後)，執行恢復邏輯
           if (pendingSeekTime !== null) {
-            console.log(`🔊 恢復播放狀態: ${pendingSeekTime}s`);
-            
-            // 1. 恢復秒數
             e.currentTarget.currentTime = pendingSeekTime;
-            
-            // 2. 恢復播放狀態
             if (shouldPlayAfterSeek) {
                 const playPromise = e.currentTarget.play();
                 if (playPromise !== undefined) {
-                    playPromise
-                        .then(() => setIsPlaying(true))
-                        .catch(err => console.warn("Autoplay blocked:", err));
+                    playPromise.then(() => setIsPlaying(true)).catch(console.warn);
                 }
             } else {
                 e.currentTarget.pause();
                 setIsPlaying(false);
             }
-
             setPendingSeekTime(null);
           }
         }}
@@ -219,6 +254,50 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
         onPlay={() => setIsPlaying(true)}
         onPause={() => setIsPlaying(false)}
       />
+
+      {/* ✅ 新增：版本資訊與操作標題列 */}
+      <div className="flex items-end justify-between px-2">
+        <div>
+           <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+             {currentVersion?.name}
+             <span className="text-sm font-normal text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded-full border border-zinc-800">
+               v{currentVersion?.version_number}
+             </span>
+           </h2>
+           <p className="text-xs text-zinc-500 mt-1">
+             Created at {currentVersion && new Date(currentVersion.created_at).toLocaleDateString()}
+           </p>
+        </div>
+
+        {/* 版本操作選單 */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white">
+              <MoreHorizontal className="w-5 h-5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
+            <DropdownMenuItem 
+              onClick={() => {
+                if (currentVersion) {
+                  setNewName(currentVersion.name);
+                  setIsRenameDialogOpen(true);
+                }
+              }}
+              className="cursor-pointer focus:bg-zinc-800 focus:text-white"
+            >
+              <Edit className="mr-2 h-4 w-4" /> 重新命名
+            </DropdownMenuItem>
+            <DropdownMenuSeparator className="bg-zinc-800" />
+            <DropdownMenuItem 
+              onClick={handleDeleteAsset}
+              className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
+            >
+              <Trash2 className="mr-2 h-4 w-4" /> 刪除版本
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
 
       <div className="relative">
         <PlayerControls
@@ -242,6 +321,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
           />
         </div>
         
+        {/* 留言區域 */}
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 flex flex-col h-[600px] shadow-2xl">
           <div className="flex items-center justify-between mb-4 px-1">
             <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">留言反饋</h3>
@@ -303,7 +383,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
                               <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
                             </DropdownMenuItem>
                             <DropdownMenuItem 
-                              onClick={() => handleDelete(c.id)} 
+                              onClick={() => handleCommentDelete(c.id)} 
                               className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
                             >
                               <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
@@ -332,7 +412,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
                           </Button>
                           <Button 
                             size="sm" 
-                            onClick={() => handleUpdate(c.id)}
+                            onClick={() => handleCommentUpdate(c.id)}
                             className="h-8 bg-blue-600 hover:bg-blue-700 text-white"
                           >
                             <Check className="w-4 h-4 mr-1" /> 儲存
@@ -351,6 +431,31 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
           </div>
         </div>
       </div>
+
+      {/* Rename Dialog */}
+      <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
+        <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white">
+          <DialogHeader>
+            <DialogTitle>重新命名版本</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input 
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              className="bg-zinc-800 border-zinc-700 text-white focus:ring-blue-600"
+              placeholder="輸入新的版本名稱"
+            />
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="ghost" className="text-zinc-400 hover:text-white">取消</Button>
+            </DialogClose>
+            <Button onClick={handleRenameAsset} className="bg-blue-600 hover:bg-blue-500">
+              儲存
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
