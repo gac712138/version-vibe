@@ -47,10 +47,11 @@ interface Comment {
 interface TrackPlayerProps {
   projectId: string;
   versions: Version[];
+  canEdit: boolean; // ✅ 修正：新增 canEdit 介面定義，解決 TypeScript 報錯
 }
 
-export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
-  // ... (State 和 Hook 邏輯保持不變，直接沿用即可)
+export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) {
+  // ... (State 和 Hook 邏輯保持不變)
   const router = useRouter();
   const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -97,15 +98,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
       const targetVersion = versions.find(v => v.id === targetVersionId);
       if (targetVersion) setCurrentVersion(targetVersion);
     }
-    const targetCommentId = searchParams.get("commentId");
-    if (targetCommentId && comments.length > 0) {
-      const targetComment = comments.find(c => c.id === targetCommentId);
-      if (targetComment) {
-        setPendingSeekTime(targetComment.timestamp);
-        setShouldPlayAfterSeek(false); 
-      }
-    }
-  }, [searchParams, versions, comments, currentVersion]);
+  }, [searchParams, versions, currentVersion]);
 
   useEffect(() => {
     if (currentVersion && audioRef.current) {
@@ -223,7 +216,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
         onPause={() => setIsPlaying(false)}
       />
 
-      {/* 1. Header: 純文字標題區 (按鈕移走) */}
       <div className="px-2">
          <div className="flex items-center gap-3 mb-1">
            <h2 className="text-2xl font-bold text-white truncate">
@@ -238,46 +230,43 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
          </p>
       </div>
 
-      {/* 2. 主要佈局 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* 左側：整合式播放器卡片 */}
         <div className="lg:col-span-2">
-           {/* 卡片容器：設定 relative 以便定位右上角按鈕 */}
            <div className="relative bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
               
-              {/* ✨ A. 右上角操作按鈕 (Absolute Position) */}
-              <div className="absolute top-6 right-6 z-20">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-full">
-                      <MoreHorizontal className="w-5 h-5" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
-                    <DropdownMenuItem 
-                      onClick={() => {
-                        if (currentVersion) {
-                          setNewName(currentVersion.name);
-                          setIsRenameDialogOpen(true);
-                        }
-                      }}
-                      className="cursor-pointer focus:bg-zinc-800 focus:text-white"
-                    >
-                      <Edit className="mr-2 h-4 w-4" /> 重新命名
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator className="bg-zinc-800" />
-                    <DropdownMenuItem 
-                      onClick={handleDeleteAsset}
-                      className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" /> 刪除版本
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+              {/* ✨ A. 右上角操作按鈕 (僅 Owner/Admin 可見) */}
+              {canEdit && (
+                <div className="absolute top-6 right-6 z-20">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-full">
+                        <MoreHorizontal className="w-5 h-5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
+                      <DropdownMenuItem 
+                        onClick={() => {
+                          if (currentVersion) {
+                            setNewName(currentVersion.name);
+                            setIsRenameDialogOpen(true);
+                          }
+                        }}
+                        className="cursor-pointer focus:bg-zinc-800 focus:text-white"
+                      >
+                        <Edit className="mr-2 h-4 w-4" /> 重新命名
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator className="bg-zinc-800" />
+                      <DropdownMenuItem 
+                        onClick={handleDeleteAsset}
+                        className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" /> 刪除版本
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
 
-              {/* ✨ B. 播放器核心 (加 padding，避免內容貼邊) */}
               <div className="p-6 pb-2">
                 <PlayerControls
                   isPlaying={isPlaying}
@@ -290,7 +279,6 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
                 />
               </div>
 
-              {/* ✨ C. 底部下拉選單 (Footer 樣式) */}
               <div className="px-6 pb-6 pt-2">
                 <VersionList
                   versions={versions}
@@ -300,11 +288,9 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
                   className="w-full"
                 />
               </div>
-
            </div>
         </div>
         
-        {/* 右側：留言區 (保持不變) */}
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 flex flex-col h-[600px] shadow-2xl">
           <div className="flex items-center justify-between mb-4 px-1">
             <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">留言反饋</h3>
@@ -351,7 +337,8 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
                         {new Date(c.timestamp * 1000).toISOString().substr(14, 5)}
                       </button>
                       
-                      {currentUserId === c.user_id && editingId !== c.id && (
+                      {/* ✅ 改動：Owner 或本人可以管理留言 */}
+                      {(currentUserId === c.user_id || canEdit) && editingId !== c.id && (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-zinc-500 hover:text-white">
@@ -385,19 +372,10 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
                           autoFocus
                         />
                         <div className="flex justify-end gap-2 mt-2">
-                          <Button 
-                            size="sm" 
-                            variant="ghost" 
-                            onClick={() => setEditingId(null)}
-                            className="h-8 text-zinc-400 hover:text-white"
-                          >
+                          <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-8 text-zinc-400 hover:text-white">
                             <X className="w-4 h-4 mr-1" /> 取消
                           </Button>
-                          <Button 
-                            size="sm" 
-                            onClick={() => handleCommentUpdate(c.id)}
-                            className="h-8 bg-blue-600 hover:bg-blue-700 text-white"
-                          >
+                          <Button size="sm" onClick={() => handleCommentUpdate(c.id)} className="h-8 bg-blue-600 hover:bg-blue-700 text-white">
                             <Check className="w-4 h-4 mr-1" /> 儲存
                           </Button>
                         </div>
@@ -415,12 +393,9 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
         </div>
       </div>
 
-      {/* Rename Dialog */}
       <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white">
-          <DialogHeader>
-            <DialogTitle>重新命名版本</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>重新命名版本</DialogTitle></DialogHeader>
           <div className="py-4">
             <Input 
               value={newName}
@@ -433,9 +408,7 @@ export function TrackPlayer({ projectId, versions }: TrackPlayerProps) {
             <DialogClose asChild>
               <Button variant="ghost" className="text-zinc-400 hover:text-white">取消</Button>
             </DialogClose>
-            <Button onClick={handleRenameAsset} className="bg-blue-600 hover:bg-blue-500">
-              儲存
-            </Button>
+            <Button onClick={handleRenameAsset} className="bg-blue-600 hover:bg-blue-500">儲存</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

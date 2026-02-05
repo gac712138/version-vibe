@@ -20,11 +20,10 @@ export default async function TrackPage({ params }: TrackPageProps) {
 
   if (!user) return redirect("/login");
 
-  // ✅ 核心修正：改用 RPC 獲取歌曲詳情、版本列表與專案資訊，徹底避開 RLS 遞迴
+  // 1. 透過 RPC 獲取歌曲詳情 (避開 RLS 遞迴)
   const { data: context, error: rpcError } = await supabase
     .rpc('get_track_detail_context', { p_track_id: trackId });
 
-  // 如果 RPC 報錯或找不到歌曲，才執行 404
   if (rpcError || !context || !context.track) {
     console.error("❌ [Track Page RPC Error]:", rpcError?.message);
     return notFound();
@@ -32,7 +31,19 @@ export default async function TrackPage({ params }: TrackPageProps) {
 
   const { track, assets, project } = context;
 
-  // 依照版本號倒序排列 (最新的 V 在最上面)
+  // 2. 🛡️ 獲取當前使用者角色並判斷編輯權限
+  // 透過穩定的 my_projects View 獲取角色，避免觸發 project_members 的遞迴錯誤
+  const { data: projectData } = await supabase
+    .from("my_projects")
+    .select("my_role")
+    .eq("id", id)
+    .maybeSingle();
+
+  const role = projectData?.my_role || 'viewer';
+  // 只有 owner 或 admin 具備編輯與上傳權限
+  const canEdit = role === 'owner' || role === 'admin';
+
+  // 依照版本號倒序排列
   const versions = (assets || []).sort((a: any, b: any) => b.version_number - a.version_number);
 
   return (
@@ -49,7 +60,6 @@ export default async function TrackPage({ params }: TrackPageProps) {
             
             <div className="flex flex-col">
               <div className="text-xs text-zinc-500 mb-0.5">
-                {/* ✅ 改從 RPC 獲取的 project 物件拿名稱 */}
                 <span>{project?.name}</span>
               </div>
               
@@ -60,7 +70,8 @@ export default async function TrackPage({ params }: TrackPageProps) {
           </div>
 
           <div className="flex items-center gap-2">
-            <UploadVersionBtn projectId={id} trackId={trackId} />
+            {/* ✅ 只有非 Viewer 才能看到標頭的上傳按鈕 */}
+            {canEdit && <UploadVersionBtn projectId={id} trackId={trackId} />}
           </div>
         </div>
       </header>
@@ -84,12 +95,17 @@ export default async function TrackPage({ params }: TrackPageProps) {
               </p>
             </div>
              <div className="mt-4">
-               <UploadVersionBtn projectId={id} trackId={trackId} />
+               {/* ✅ 空狀態的上傳按鈕同樣受權限控管 */}
+               {canEdit ? (
+                 <UploadVersionBtn projectId={id} trackId={trackId} />
+               ) : (
+                 <p className="text-xs text-zinc-600 italic">您目前的權限為 Viewer，無權限上傳音檔</p>
+               )}
              </div>
           </div>
         ) : (
-          /* ✅ 傳入排序後的 versions */
-          <TrackPlayer projectId={id} versions={versions} />
+          /* ✅ 傳入 canEdit 讓播放器決定是否顯示「重新命名」或「刪除」選單 */
+          <TrackPlayer projectId={id} versions={versions} canEdit={canEdit} />
         )}
       </main>
     </div>
