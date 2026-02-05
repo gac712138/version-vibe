@@ -1,136 +1,106 @@
 import { createClient } from "@/utils/supabase/server";
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-// ❌ 移除 dynamic import
-// import dynamic from "next/dynamic"; 
-
 import { Button } from "@/components/ui/button";
 import { Plus, Music, Users, ArrowLeft } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-
-// ✅ 改成標準匯入 (因為 OnboardingGuide 裡面已經有 "use client")
+import { ProjectHeader } from "@/components/ProjectHeader";
 import { OnboardingGuide } from "./OnboardingGuide";
+import { InviteSection } from "./InviteSection";
+import { TrackItemActions } from "./TrackItemActions";
 
-// 假設你有一個邀請組件 (如果沒有，可以先註解掉)
-import { InviteSection } from "./InviteSection"; 
+// ✅ 強制每次請求都重新獲取資料，確保身分狀態與成員名單是最新的
+export const revalidate = 0;
 
 interface ProjectPageProps {
-  params: Promise<{
-    id: string;
-  }>;
+  params: Promise<{ id: string }>;
 }
 
 export default async function ProjectPage({ params }: ProjectPageProps) {
   const { id } = await params;
   const supabase = await createClient();
 
-  // 1. 驗證登入
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user) {
-    return redirect("/login");
+  if (!user) return redirect("/login");
+
+  // 1. 透過 RPC 一次拿齊所有資料 (Project + Members + Tracks)
+  const { data: projectContext, error: rpcError } = await supabase
+    .rpc('get_project_data', { p_id: id });
+
+  if (rpcError || !projectContext || !projectContext.project) {
+    console.error("❌ [RPC Error]:", rpcError?.message);
+    return notFound();
   }
 
-  // 2. 獲取專案資訊
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .select("*")
-    .eq("id", id)
-    .single();
+  // ✅ 從 RPC 結果解構出所有資料
+  const { project, members, tracks } = projectContext;
 
-  if (projectError || !project) {
-    return <div className="text-white p-10">找不到專案或無權限訪問</div>;
-  }
+  const currentMember = (members as any[])?.find(m => m.user_id === user.id);
+  if (!currentMember) return notFound();
 
-  // 3. 獲取專案下的 Tracks (音軌)
-  const { data: tracks } = await supabase
-    .from("tracks") 
-    .select("*, audio_assets(*)") 
-    .eq("project_id", id)
-    .order("created_at", { ascending: false });
+  const role = currentMember.role;
+  const canEdit = role === 'owner' || role === 'admin';
+  const isNewMember = !currentMember.display_name || currentMember.display_name.trim() === "";
 
-  // 4. 獲取成員列表 (Member List)
-  const { data: members } = await supabase
-    .from("project_members")
-    .select("*")
-    .eq("project_id", id);
-
-  // 5. 檢查當前使用者是否為新成員 (用於 Onboarding)
-  const currentMember = members?.find(m => m.user_id === user.id);
-  // 如果找不到 display_name，視為新成員
-  const isNewMember = !currentMember?.display_name;
+  // ⚠️ 移除原本這裡的 supabase.from("tracks") 查詢，因為上面已經拿到了
 
   return (
     <div className="min-h-screen bg-black text-white pb-20">
-      {/* 新成員引導彈窗 */}
-      <OnboardingGuide 
-        projectId={id} 
-        isNewMember={isNewMember} 
-      />
-
-      {/* Header */}
-      <header className="border-b border-zinc-900 bg-black/50 backdrop-blur-md sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href="/dashboard" className="text-zinc-500 hover:text-white transition-colors">
-              <ArrowLeft className="w-5 h-5" />
-            </Link>
-            <div>
-              <h1 className="text-xl font-bold">{project.name}</h1>
-              <p className="text-xs text-zinc-500">
-                {new Date(project.created_at).toLocaleDateString()}
-              </p>
-            </div>
-          </div>
-          <Button className="bg-blue-600 hover:bg-blue-500 text-white gap-2">
-            <Plus className="w-4 h-4" /> Add Track
-          </Button>
-        </div>
-      </header>
+      <OnboardingGuide projectId={id} isNewMember={isNewMember} />
+      <ProjectHeader project={project} currentUserRole={role} />
 
       <main className="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* 左側：音軌列表 (Main Content) */}
         <div className="lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold text-zinc-400 tracking-wider uppercase">Tracks</h2>
-            <span className="text-xs text-zinc-600">{tracks?.length || 0} songs</span>
+            <div className="flex items-center gap-4">
+              {/* ✅ 使用 tracks.length */}
+              <span className="text-xs text-zinc-600">{(tracks as any[])?.length || 0} songs</span>
+              {canEdit && (
+                <Button size="sm" className="bg-blue-600 hover:bg-blue-500 text-white gap-2 h-8">
+                  <Plus className="w-4 h-4" /> Add Track
+                </Button>
+              )}
+            </div>
           </div>
 
-          {!tracks || tracks.length === 0 ? (
+          {/* ✅ 列表渲染邏輯 */}
+          {!tracks || (tracks as any[]).length === 0 ? (
             <div className="border border-dashed border-zinc-800 rounded-xl p-12 text-center text-zinc-500">
               <Music className="w-10 h-10 mx-auto mb-4 opacity-50" />
               <p>尚未上傳任何音軌</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {tracks.map((track) => (
-                <Link 
-                  key={track.id} 
-                  href={`/project/${id}/track/${track.id}`}
-                  className="block group"
-                >
-                  <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 flex items-center justify-between hover:bg-zinc-900 hover:border-zinc-700 transition-all">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-zinc-800 rounded-lg flex items-center justify-center text-zinc-500 group-hover:text-white group-hover:bg-zinc-700 transition-colors">
-                        <Music className="w-5 h-5" />
+              {(tracks as any[]).map((track) => (
+                <div key={track.id} className="relative group">
+                  <Link href={`/project/${id}/track/${track.id}`} className="block">
+                    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 flex items-center justify-between hover:bg-zinc-900 hover:border-zinc-700 transition-all pr-12">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 bg-zinc-800 rounded-lg flex items-center justify-center text-zinc-500 group-hover:text-white transition-colors">
+                          <Music className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-zinc-200 group-hover:text-white">{track.name}</h3>
+                          <p className="text-xs text-zinc-500">
+                            {track.audio_assets?.length || 0} versions
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="font-bold text-zinc-200 group-hover:text-white">{track.name}</h3>
-                        <p className="text-xs text-zinc-500">
-                          {track.audio_assets?.length || 0} versions
-                        </p>
-                      </div>
+                      <ArrowLeft className="w-5 h-5 text-zinc-600 rotate-180 group-hover:text-white transition-all" />
                     </div>
-                    <ArrowLeft className="w-5 h-5 text-zinc-600 rotate-180 group-hover:text-white group-hover:translate-x-1 transition-all" />
+                  </Link>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 z-10">
+                    <TrackItemActions track={track} canEdit={canEdit} />
                   </div>
-                </Link>
+                </div>
               ))}
             </div>
           )}
         </div>
 
-        {/* 右側：專案管理 (Sidebar) */}
+        {/* 右側：側邊欄 (管理與成員列表) */}
         <div className="space-y-6">
-          {/* 1. 邀請區塊 */}
           <div className="border border-zinc-800 rounded-xl p-5 bg-zinc-900/30">
             <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-4 flex items-center gap-2">
               <Users className="w-3 h-3" /> Project Management
@@ -138,40 +108,31 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
             <InviteSection projectId={id} /> 
           </div>
 
-          {/* 2. 成員列表 (Member List) */}
           <div className="border border-zinc-800 rounded-xl p-5 bg-zinc-900/30">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
-                Member List
-              </h3>
-              <span className="text-xs text-zinc-600 bg-zinc-900 px-2 py-0.5 rounded-full">
-                {members?.length || 0}
-              </span>
+              <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Member List</h3>
+              <span className="text-xs text-zinc-600 bg-zinc-900 px-2 py-0.5 rounded-full">{members?.length || 0}</span>
             </div>
-
             <div className="space-y-3">
-              {members && members.length > 0 ? (
-                members.map((member) => (
-                  <div key={member.id} className="flex items-center gap-3">
-                    <Avatar className="w-8 h-8 border border-zinc-700">
-                      <AvatarImage src={member.avatar_url || ""} />
-                      <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs">
-                        {member.display_name?.[0]?.toUpperCase() || "?"}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex flex-col">
-                      <span className="text-sm font-medium text-zinc-200">
-                        {member.display_name || "未命名成員"}
-                      </span>
-                      <span className="text-[10px] text-zinc-500 uppercase">
-                        {member.role || "Member"}
-                      </span>
-                    </div>
+              {members && (members as any[]).map((member) => (
+                <div key={member.id} className="flex items-center gap-3">
+                  <Avatar className="w-8 h-8 border border-zinc-700">
+                    <AvatarImage src={member.avatar_url || ""} />
+                    <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs">
+                      {member.display_name?.[0]?.toUpperCase() || "?"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-zinc-200">
+                      {member.display_name || "未命名成員"}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 uppercase flex items-center gap-1">
+                      {member.role}
+                      {member.user_id === user.id && <span className="text-blue-500 font-bold">(You)</span>}
+                    </span>
                   </div>
-                ))
-              ) : (
-                <p className="text-sm text-zinc-500">暫無成員</p>
-              )}
+                </div>
+              ))}
             </div>
           </div>
         </div>

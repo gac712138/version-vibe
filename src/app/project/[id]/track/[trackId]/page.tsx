@@ -6,6 +6,9 @@ import Link from "next/link";
 import { UploadVersionBtn } from "@/components/UploadVersionBtn";
 import { TrackPlayer } from "@/components/TrackPlayer";
 
+// ✅ 強制每次請求都重新獲取資料
+export const revalidate = 0;
+
 interface TrackPageProps {
   params: Promise<{ id: string; trackId: string }>;
 }
@@ -17,21 +20,20 @@ export default async function TrackPage({ params }: TrackPageProps) {
 
   if (!user) return redirect("/login");
 
-  const { data: track } = await supabase
-    .from("tracks")
-    .select(`
-      *,
-      projects:project_id ( name ),
-      audio_assets (*)
-    `)
-    .eq("id", trackId)
-    .eq("project_id", id)
-    .single();
+  // ✅ 核心修正：改用 RPC 獲取歌曲詳情、版本列表與專案資訊，徹底避開 RLS 遞迴
+  const { data: context, error: rpcError } = await supabase
+    .rpc('get_track_detail_context', { p_track_id: trackId });
 
-  if (!track) return notFound();
+  // 如果 RPC 報錯或找不到歌曲，才執行 404
+  if (rpcError || !context || !context.track) {
+    console.error("❌ [Track Page RPC Error]:", rpcError?.message);
+    return notFound();
+  }
+
+  const { track, assets, project } = context;
 
   // 依照版本號倒序排列 (最新的 V 在最上面)
-  const versions = track.audio_assets?.sort((a: any, b: any) => b.version_number - a.version_number) || [];
+  const versions = (assets || []).sort((a: any, b: any) => b.version_number - a.version_number);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
@@ -46,9 +48,9 @@ export default async function TrackPage({ params }: TrackPageProps) {
             </Link>
             
             <div className="flex flex-col">
-              {/* ✅ 修改這裡：移除了 "/ Track 0" */}
               <div className="text-xs text-zinc-500 mb-0.5">
-                <span>{track.projects?.name}</span>
+                {/* ✅ 改從 RPC 獲取的 project 物件拿名稱 */}
+                <span>{project?.name}</span>
               </div>
               
               <h1 className="text-lg font-bold flex items-center gap-2">
@@ -86,6 +88,7 @@ export default async function TrackPage({ params }: TrackPageProps) {
              </div>
           </div>
         ) : (
+          /* ✅ 傳入排序後的 versions */
           <TrackPlayer projectId={id} versions={versions} />
         )}
       </main>
