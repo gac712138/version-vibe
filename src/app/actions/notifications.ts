@@ -35,7 +35,9 @@ export async function getNotifications(): Promise<NotificationItem[]> {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  if (error || !notifications) return [];
+  if (error || !notifications || notifications.length === 0) {
+    return [];
+  }
 
   // 2. 豐富化資料 (查詢發送者資訊)
   const enrichedNotifications = await Promise.all(
@@ -43,37 +45,32 @@ export async function getNotifications(): Promise<NotificationItem[]> {
       let displayName = "未知成員";
       let avatarUrl: string | null = null;
 
-      // 步驟 A: 先嘗試從「專案成員表」找 (這是優先顯示的暱稱)
+      // --- 步驟 A: 先查全域 Profile (取得頭像 & 備用名稱) ---
+      // 為什麼先查這個？因為頭像通常只有這裡有，而且這一步最不容易失敗
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("display_name, avatar_url")
+        .eq("id", n.sender_id)
+        .maybeSingle();
+
+      if (profile) {
+        displayName = profile.display_name || "未知使用者";
+        avatarUrl = profile.avatar_url;
+      }
+
+      // --- 步驟 B: 嘗試覆蓋為「專案暱稱」 ---
       if (n.project_id && n.sender_id) {
         const { data: member } = await supabase
           .from("project_members")
-          .select("display_name, avatar_url")
+          .select("display_name") // ✅ 只查 display_name，不要查 avatar_url (除非你確定表裡有這欄)
           .eq("user_id", n.sender_id)
           .eq("project_id", n.project_id) 
           .maybeSingle();
 
-        if (member) {
-          // 如果專案成員表有名字，就用它；否則保留未知，等下一步查全域
-          if (member.display_name) displayName = member.display_name;
-          // 專案成員表通常會同步頭像，如果有就用
-          if (member.avatar_url) avatarUrl = member.avatar_url;
+        // 如果在專案成員表裡有找到名字，就用這個名字覆蓋全域名稱
+        if (member && member.display_name) {
+          displayName = member.display_name;
         }
-      }
-
-      // 步驟 B: 如果在專案表找不到 (例如已退出專案)，或資料缺漏，則查「全域 Profile」
-      if (displayName === "未知成員" || !avatarUrl) {
-         const { data: profile } = await supabase
-           .from("profiles")
-           .select("display_name, avatar_url")
-           .eq("id", n.sender_id)
-           .maybeSingle();
-         
-         if (profile) {
-            // 只有當名字還是未知時，才用全域名稱覆蓋
-            if (displayName === "未知成員") displayName = profile.display_name || "未知使用者";
-            // 如果還沒有頭像，就用全域頭像
-            if (!avatarUrl) avatarUrl = profile.avatar_url;
-         }
       }
 
       return {
@@ -89,7 +86,6 @@ export async function getNotifications(): Promise<NotificationItem[]> {
   return enrichedNotifications;
 }
 
-// ... markAsRead 與 markAllAsRead 維持不變
 export async function markAsRead(notificationId: string) {
   const supabase = await createClient();
   await supabase.from("notifications").update({ is_read: true }).eq("id", notificationId);

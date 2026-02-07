@@ -87,7 +87,7 @@ export function PlayerControls({
                 <div 
                   key={i} 
                   className={`flex-1 rounded-full ${((i/100) * duration < currentTime) ? 'bg-blue-500' : 'bg-zinc-600'}`} 
-                  style={{ height: `${20 + Math.random() * 80}%` }}
+                  style={{ height: `${(20 + Math.abs(Math.sin(i * 123)) * 80).toFixed(2)}%` }}
                 />
               ))}
             </div>

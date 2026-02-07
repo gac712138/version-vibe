@@ -222,8 +222,8 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
            </span>
          </div>
          <p className="text-xs text-zinc-500">
-           Created at {currentVersion && new Date(currentVersion.created_at).toLocaleDateString()}
-         </p>
+  Created at {currentVersion && currentVersion.created_at.split('T')[0]}
+</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

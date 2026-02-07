@@ -10,7 +10,6 @@ export interface CommentWithUser {
   timestamp: number;
   created_at: string;
   user_id: string;
-  // 這是我們要補上的作者資訊
   author: {
     display_name: string;
     avatar_url: string | null;
@@ -28,7 +27,7 @@ export async function getComments(assetId: string, projectId: string): Promise<C
     .from("comments")
     .select("*")
     .eq("asset_id", assetId)
-    .order("timestamp", { ascending: true }); // 依照秒數排序，或依 created_at 排序
+    .order("timestamp", { ascending: true });
 
   if (error) {
     console.error("Fetch comments error:", error);
@@ -37,36 +36,37 @@ export async function getComments(assetId: string, projectId: string): Promise<C
 
   if (!comments) return [];
 
-  // 2. 豐富化資料：補上作者的 專案暱稱 與 頭像
+  // 2. 豐富化資料：分別查詢 Profile (頭像) 與 Project Member (暱稱)
   const enrichedComments = await Promise.all(
     comments.map(async (c) => {
       let displayName = "未知成員";
       let avatarUrl = null;
 
-      // A. 優先查專案成員表 (取得在該專案的暱稱)
-      const { data: member } = await supabase
-        .from("project_members")
+      // --- 步驟 A: 先查全域 Profile (取得頭像 & 全域名稱當備案) ---
+      // 這是最穩的，通常頭像都在這裡
+      const { data: profile } = await supabase
+        .from("profiles")
         .select("display_name, avatar_url")
-        .eq("user_id", c.user_id)
-        .eq("project_id", projectId)
+        .eq("id", c.user_id)
         .maybeSingle();
 
-      if (member) {
-        displayName = member.display_name || displayName;
-        avatarUrl = member.avatar_url;
+      if (profile) {
+        displayName = profile.display_name || "未知使用者";
+        avatarUrl = profile.avatar_url;
       }
 
-      // B. 如果專案表沒資料 (可能已退出)，查全域 Profile
-      if (displayName === "未知成員" || !avatarUrl) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("display_name, avatar_url")
-          .eq("id", c.user_id)
+      // --- 步驟 B: 嘗試查詢「專案成員表」來覆蓋名稱 ---
+      if (projectId) {
+        const { data: member } = await supabase
+          .from("project_members")
+          .select("display_name") // ✅ 這裡只查 display_name，降低出錯機率
+          .eq("user_id", c.user_id)
+          .eq("project_id", projectId)
           .maybeSingle();
-        
-        if (profile) {
-          if (displayName === "未知成員") displayName = profile.display_name || "未知使用者";
-          if (!avatarUrl) avatarUrl = profile.avatar_url;
+
+        // 如果該成員在這個專案有設定暱稱，就用它覆蓋全域名稱
+        if (member && member.display_name) {
+          displayName = member.display_name;
         }
       }
 
@@ -84,7 +84,7 @@ export async function getComments(assetId: string, projectId: string): Promise<C
 }
 
 /**
- * 新增留言 (原本的程式碼，維持不變)
+ * 新增留言
  */
 export async function createComment(data: {
   content: string;
@@ -165,7 +165,6 @@ export async function createComment(data: {
   revalidatePath(`/project/${data.project_id}`);
 }
 
-// ... deleteComment 與 updateComment 維持原本樣子即可
 export async function deleteComment(commentId: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

@@ -4,9 +4,7 @@ import Link from "next/link";
 import { Music, Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-// ✅ 引入你原本寫好的 Header
 import { ProjectHeader } from "@/components/ProjectHeader";
-// ✅ 引入新增歌曲按鈕 (請確認檔案位置，若在同層目錄請用 ./)
 import { CreateTrackBtn } from "@/components/CreateTrackBtn"; 
 
 import { OnboardingGuide } from "./OnboardingGuide";
@@ -26,27 +24,38 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return redirect("/login");
 
-  // 1. 獲取專案資料
+  // 1. 嘗試獲取專案資料 (RPC)
   const { data: projectContext } = await supabase.rpc('get_project_data', { p_id: id });
   
-  // 2. 資料處理與防呆 (關鍵修正)
   let project = projectContext?.project;
-  // ✅ 即使資料庫回傳 null，這裡也會強制轉為空陣列 []，防止 .map 崩潰
-  let members = projectContext?.members || [];
   let tracks = projectContext?.tracks || [];
 
-  // 3. Fallback: 如果 RPC 失敗或沒資料，嘗試手動查詢
+  // 🚀 關鍵修正：
+  // 不管 RPC 有沒有回傳 members，我們都 "強制" 重新抓一次成員資料
+  // 這樣才能確保使用 .select('*, profiles(...)') 語法拿到頭像
+  const { data: membersData } = await supabase
+    .from("project_members")
+    .select(`
+      *,
+      profiles (
+        avatar_url,
+        display_name
+      )
+    `)
+    .eq("project_id", id);
+
+  // 使用我們剛抓到的完整資料 (包含 profiles)
+  let members = membersData || [];
+
+  // 3. Fallback: 如果 RPC 連專案都沒抓到 (例如 RPC 沒寫好或報錯)，才跑這裡
   if (!project) {
     const pRes = await supabase.from("projects").select("*").eq("id", id).single();
     if (pRes.error) {
-       // 如果連專案都找不到，那就是真的 404
        return notFound();
     }
     project = pRes.data;
     
-    const mRes = await supabase.from("project_members").select("*, profiles(*)").eq("project_id", id);
-    members = mRes.data || [];
-    
+    // tracks 也要補抓 (因為上面 RPC 可能失敗)
     const tRes = await supabase.from("tracks").select("*, audio_assets(*)").eq("project_id", id).order("created_at", { ascending: false });
     tracks = tRes.data || [];
   }
@@ -80,7 +89,6 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
           </div>
 
           <div className="space-y-3">
-            {/* ✅ 現在 tracks 絕對是陣列，不會再噴錯了 */}
             {tracks.length === 0 ? (
                 <div className="text-zinc-500 text-sm py-8 text-center border border-dashed border-zinc-800 rounded-xl">
                     尚未上傳任何音軌
@@ -130,7 +138,11 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
                     <div key={member.id} className="flex items-center justify-between group">
                       <div className="flex items-center gap-3">
                         <Avatar className="w-8 h-8 border border-zinc-700">
-                          <AvatarImage src={member.profiles?.avatar_url || ""} />
+                          {/* ✅ 這裡現在可以抓到 avatar_url 了，因為上面的 query 有包含 profiles */}
+                          <AvatarImage 
+  src={member.profiles?.avatar_url || ""} 
+  className="object-cover" 
+/>
                           <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs">
                             {member.display_name?.[0]?.toUpperCase()}
                           </AvatarFallback>
