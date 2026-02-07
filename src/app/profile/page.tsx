@@ -5,12 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, Upload, Trash2, User, Briefcase, Camera } from "lucide-react"; // 新增 Camera icon
+import { Loader2, Upload, Trash2, User, Briefcase, Camera } from "lucide-react";
 import { toast } from "sonner";
 import { ImageCropper } from "@/components/ImageCropper"; 
 import { getCroppedImg } from "@/lib/canvasUtils"; 
 import { createClient } from "@/utils/supabase/client";
 import { useRouter } from "next/navigation";
+import { deleteAccount } from "@/app/actions/auth"; // ✅ 引入刪除帳號 Action
 import {
   Select,
   SelectContent,
@@ -24,8 +25,17 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-  DialogClose,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"; // ✅ 引入確認視窗
 
 export default function ProfilePage() {
   const supabase = createClient();
@@ -51,6 +61,10 @@ export default function ProfilePage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [projectNickname, setProjectNickname] = useState("");
   const [savingProjectNickname, setSavingProjectNickname] = useState(false);
+
+  // 刪除帳號狀態
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // 隱藏的檔案輸入框 Ref
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,7 +128,6 @@ export default function ProfilePage() {
       reader.onload = () => {
         setSelectedFile(reader.result as string);
         setIsCropperOpen(true); // 選完圖後開啟裁切彈窗
-        // 清空 input 讓同一張圖可以重複選
         e.target.value = ""; 
       };
       reader.readAsDataURL(file);
@@ -182,6 +195,7 @@ export default function ProfilePage() {
 
       if (error) throw error;
 
+      // 同步更新所有專案成員表中的頭像 (如果設計上需要)
       await supabase
         .from("project_members")
         .update({ avatar_url: finalAvatarUrl } as any)
@@ -228,9 +242,21 @@ export default function ProfilePage() {
     }
   };
 
+  // --- 刪除帳號 Handler (整合 Server Action) ---
   const handleDeleteAccount = async () => {
-    if (!confirm("警告：這將永久刪除你的帳號與所有專案，無法恢復！")) return;
-    toast.error("此功能需要後端 API 支援");
+    setIsDeleting(true);
+    try {
+      await deleteAccount();
+      toast.success("帳號已刪除，後會有期 👋");
+      
+      // 3. ✅ 在前端進行跳轉
+      router.replace("/login");
+    } catch (error) {
+      console.error(error);
+      toast.error("刪除失敗，請稍後再試");
+      setIsDeleting(false);
+      setShowDeleteDialog(false);
+    }
   };
 
   if (loading) {
@@ -251,10 +277,9 @@ export default function ProfilePage() {
         {/* --- 全域設定區 --- */}
         <div className="space-y-8 bg-zinc-900/30 p-8 rounded-xl border border-zinc-800/50">
           
-          {/* 頭像設定 (簡化版) */}
+          {/* 頭像設定 */}
           <div className="flex flex-col items-center justify-center gap-4 py-4">
             <div className="relative group">
-              {/* 頭像按鈕 */}
               <div 
                 onClick={() => fileInputRef.current?.click()}
                 className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-zinc-800 shadow-xl cursor-pointer transition-all group-hover:border-blue-600 group-hover:scale-105"
@@ -266,14 +291,12 @@ export default function ProfilePage() {
                   </AvatarFallback>
                 </Avatar>
                 
-                {/* Hover 提示遮罩 */}
                 <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                    <Camera className="w-8 h-8 text-white mb-1" />
                    <span className="text-[10px] font-bold text-white uppercase tracking-wider">更換頭像</span>
                 </div>
               </div>
               
-              {/* 隱藏的 Input */}
               <input 
                 ref={fileInputRef}
                 type="file" 
@@ -373,7 +396,11 @@ export default function ProfilePage() {
 
         {/* 底部操作區 */}
         <div className="flex items-center justify-between pt-6 border-t border-zinc-800">
-          <Button onClick={handleDeleteAccount} variant="ghost" className="text-red-500 hover:text-red-400 hover:bg-red-950/20 gap-2 px-0">
+          <Button 
+            onClick={() => setShowDeleteDialog(true)} 
+            variant="ghost" 
+            className="text-red-500 hover:text-red-400 hover:bg-red-950/20 gap-2 px-0"
+          >
              <Trash2 className="h-4 w-4" /> 刪除帳號
           </Button>
           <Button variant="outline" className="border-zinc-700 text-zinc-300" onClick={() => router.back()}>
@@ -383,7 +410,7 @@ export default function ProfilePage() {
 
       </div>
 
-      {/* 裁切彈出視窗 (Dialog) */}
+      {/* 裁切彈出視窗 */}
       <Dialog open={isCropperOpen} onOpenChange={setIsCropperOpen}>
         <DialogContent className="bg-zinc-950 border-zinc-800 text-white sm:max-w-xl">
            <DialogHeader>
@@ -405,6 +432,44 @@ export default function ProfilePage() {
            </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 刪除確認彈出視窗 */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent className="bg-zinc-950 border-zinc-800 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-500 font-bold flex items-center gap-2">
+              <Trash2 className="w-5 h-5" />
+              確定要刪除帳號嗎？
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-zinc-400 mt-2">
+              此動作<span className="text-white font-bold mx-1">無法復原</span>。
+              <br className="mb-2"/>
+              刪除後，您的帳號將永久失效，且您在所有專案中的身分、留言、上傳的檔案都將被一併移除。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4">
+            <AlertDialogCancel className="bg-transparent border-zinc-700 hover:bg-zinc-900 text-zinc-300 hover:text-white">
+              我再想想
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => {
+                e.preventDefault(); 
+                handleDeleteAccount();
+              }}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700 text-white border-0 min-w-[100px]"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 處理中
+                </>
+              ) : (
+                "確認刪除"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
