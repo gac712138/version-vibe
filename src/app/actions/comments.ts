@@ -3,6 +3,8 @@
 import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
 
+
+
 export interface CommentWithUser {
   id: string;
   content: string;
@@ -15,51 +17,47 @@ export interface CommentWithUser {
   };
 }
 
-// ✅ 修改：新增 page 與 limit 參數
+// ✅ 修改回傳型別
+export interface GetCommentsResponse {
+  data: CommentWithUser[];
+  count: number;
+}
+
 export async function getComments(
   assetId: string, 
   projectId: string, 
   page: number = 1, 
   limit: number = 10
-): Promise<CommentWithUser[]> {
+): Promise<GetCommentsResponse> { // ✅ 改回傳物件
   const supabase = await createClient();
 
-  // 計算範圍 (例如第 1 頁是 0~9, 第 2 頁是 10~19)
   const from = (page - 1) * limit;
   const to = from + limit - 1;
 
-  // 1. 抓取留言本體 (加上 range 限制)
-  const { data: comments, error } = await supabase
+  // 1. 抓取留言 (加上 count: 'exact' 來取得總數)
+  const { data: comments, count, error } = await supabase
     .from("comments")
-    .select("*")
+    .select("*", { count: "exact" }) // ✅ 取得總筆數
     .eq("asset_id", assetId)
-    .order("created_at", { ascending: false }) // 通常留言是新的在上面，或依需求改成 timestamp
-    .range(from, to); // ✅ 關鍵：只抓取這一段
+    .order("created_at", { ascending: false })
+    .range(from, to);
 
   if (error) {
     console.error("Fetch comments error:", error);
-    return [];
+    return { data: [], count: 0 };
   }
 
-  if (!comments || comments.length === 0) return [];
+  if (!comments || comments.length === 0) {
+    return { data: [], count: count || 0 };
+  }
 
-  // 2. 豐富化資料 (這部分邏輯不變，但只會處理這 10 筆，效能更好)
+  // 2. 豐富化資料 (抓取作者資訊)
   const enrichedComments = await Promise.all(
     comments.map(async (c) => {
       let displayName = "未知成員";
       let avatarUrl = null;
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("display_name, avatar_url")
-        .eq("id", c.user_id)
-        .maybeSingle();
-
-      if (profile) {
-        displayName = profile.display_name || "未知使用者";
-        avatarUrl = profile.avatar_url;
-      }
-
+      // 先查專案成員表 (優先顯示專案內暱稱)
       if (projectId) {
         const { data: member } = await supabase
           .from("project_members")
@@ -73,6 +71,20 @@ export async function getComments(
         }
       }
 
+      // 如果沒查到或名字是未知，查全域 Profile
+      if (displayName === "未知成員") {
+         const { data: profile } = await supabase
+            .from("profiles")
+            .select("display_name, avatar_url")
+            .eq("id", c.user_id)
+            .maybeSingle();
+
+         if (profile) {
+            displayName = profile.display_name || "未知使用者";
+            avatarUrl = profile.avatar_url;
+         }
+      }
+
       return {
         ...c,
         author: {
@@ -83,9 +95,12 @@ export async function getComments(
     })
   );
 
-  return enrichedComments;
+  // ✅ 回傳結構改變
+  return { 
+    data: enrichedComments, 
+    count: count || 0 
+  }; 
 }
-
 /**
  * 新增留言
  */

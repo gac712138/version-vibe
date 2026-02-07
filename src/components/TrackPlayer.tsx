@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useSearchParams, useRouter } from "next/navigation"; 
 import { PlayerControls } from "./PlayerControls";
 import { VersionList } from "./VersionList";
-// 1. Import the new TrackComments component
 import { TrackComments } from "@/components/track/TrackComments"; 
 import { createClient } from "@/utils/supabase/client";
 import { getComments, type CommentWithUser } from "@/app/actions/comments"; 
@@ -49,7 +48,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const supabase = createClient();
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // --- State: Version & Playback ---
   const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -57,16 +55,21 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [shouldPlayAfterSeek, setShouldPlayAfterSeek] = useState(false);
 
-  // --- State: Comments (Lifted State) ---
+  // --- 狀態提升 (Lifted State) ---
   const [comments, setComments] = useState<CommentWithUser[]>([]);
+  const [isLoadingComments, setIsLoadingComments] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // --- State: Asset Management ---
+  // ✅ 新增：分頁狀態管理
+  const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const PAGE_SIZE = 10;
+
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [newName, setNewName] = useState("");
 
-
-  // 1. Get User
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -75,25 +78,62 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     getUser();
   }, [supabase]);
 
-
-  // 2. Fetch Comments (Memoized function to be passed down)
-  const fetchComments = useCallback(async () => {
+  // ✅ 1. 初始載入 / 重置 (Reset)
+  const fetchInitialComments = useCallback(async () => {
     if (!currentVersion) return;
+    
+    setIsLoadingComments(true);
+    setPage(1); // 重置頁數
+
     try {
-      const data = await getComments(currentVersion.id, projectId);
+      // 模擬載入延遲 (可選)
+      // await new Promise(resolve => setTimeout(resolve, 300));
+
+      const { data, count } = await getComments(currentVersion.id, projectId, 1, PAGE_SIZE);
+      
       setComments(data);
+      setTotalCount(count); // 更新總數
+      setHasMore(data.length < count); // 如果抓回來的少於總數，代表還有更多
+
     } catch (error) {
       console.error("Failed to fetch comments", error);
+    } finally {
+      setIsLoadingComments(false);
     }
   }, [currentVersion, projectId]);
 
-  // Initial fetch when version changes
+  // ✅ 2. 載入更多 (Load More)
+  const handleLoadMore = async () => {
+    if (!currentVersion || isLoadingMore || !hasMore) return;
+
+    setIsLoadingMore(true);
+    const nextPage = page + 1;
+
+    try {
+      // await new Promise(resolve => setTimeout(resolve, 500)); // 測試捲動動畫用
+
+      const { data, count } = await getComments(currentVersion.id, projectId, nextPage, PAGE_SIZE);
+      
+      setComments(prev => [...prev, ...data]); // 追加資料
+      setTotalCount(count);
+      setPage(nextPage);
+      
+      // 判斷是否還有更多：目前顯示數量 + 這次抓的數量 < 總數 ?
+      // 或者更簡單：這次抓回來的是否小於 PAGE_SIZE ? (如果小於代表是最後一頁)
+      // 但用總數判斷最準：
+      setHasMore(comments.length + data.length < count);
+
+    } catch (error) {
+      console.error("Load more failed", error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
   useEffect(() => {
-    fetchComments();
-  }, [fetchComments]);
+    fetchInitialComments();
+  }, [fetchInitialComments]);
 
-
-  // 3. URL Sync & Audio Source
   useEffect(() => {
     const targetVersionId = searchParams.get("versionId");
     if (targetVersionId && currentVersion?.id !== targetVersionId) {
@@ -116,9 +156,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     }
   }, [currentVersion]);
 
-
-  // --- Handlers ---
-
   const handleVersionSelect = (version: Version) => {
     if (currentVersion?.id === version.id) {
         togglePlayPause();
@@ -129,6 +166,14 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         setPendingSeekTime(currentPos);
         setShouldPlayAfterSeek(isPlaying); 
     }
+    
+    // 切換版本時，清空狀態
+    setComments([]); 
+    setIsLoadingComments(true);
+    setPage(1);
+    setHasMore(true);
+    setTotalCount(0);
+    
     setCurrentVersion(version);
   };
 
@@ -173,7 +218,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     }
   };
 
-
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-20">
       <audio
@@ -199,27 +243,13 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         onPause={() => setIsPlaying(false)}
       />
 
-      {/* Header Info */}
-      <div className="px-2">
-         <div className="flex items-center gap-3 mb-1">
-           <h2 className="text-2xl font-bold text-white truncate">
-             {currentVersion?.name}
-           </h2>
-           <span className="shrink-0 text-xs font-mono text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
-             v{currentVersion?.version_number}
-           </span>
-         </div>
-         <p className="text-xs text-zinc-500">
-            Created at {currentVersion && currentVersion.created_at.split('T')[0]}
-         </p>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Player & Versions */}
-        <div className="lg:col-span-2">
-           <div className="relative bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+        {/* ✅ 修改 1: 左側播放器 top-24 (拉大距離) */}
+        <div className="lg:col-span-2 sticky top-24 z-30">
+           
+           {/* ✅ 修改 2: 背景改為實色 bg-zinc-950 */}
+           <div className="relative bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
               
-              {/* Asset Settings Menu */}
               {canEdit && (
                 <div className="absolute top-6 right-6 z-20">
                   <DropdownMenu>
@@ -260,7 +290,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                   currentTime={currentTime}
                   duration={duration}
                   onSeek={handleSeek}
-                  comments={comments} // Pass comments for waveform markers
+                  comments={comments} 
                 />
               </div>
 
@@ -276,20 +306,25 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
            </div>
         </div>
         
-        {/* Right Column: Comments (Using new component) */}
+        {/* ✅ 修改 3: 右側留言板也加入 sticky，並限制高度，使其獨立捲動 */}
         <TrackComments 
+           className="sticky top-24 h-[calc(100vh-8rem)]"
            projectId={projectId}
            assetId={currentVersion?.id || ""}
            currentTime={currentTime}
            canEdit={canEdit}
-           comments={comments}       // Receive data from parent
+           comments={comments}       
+           isLoading={isLoadingComments}
+           isLoadingMore={isLoadingMore} 
+           hasMore={hasMore}             
+           totalCount={totalCount}       
            currentUserId={currentUserId}
            onSeek={handleSeek}
-           onRefresh={fetchComments} // Callback to refresh data
+           onRefresh={fetchInitialComments} 
+           onLoadMore={handleLoadMore}   
         />
       </div>
 
-      {/* Rename Dialog */}
       <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white">
           <DialogHeader><DialogTitle>重新命名版本</DialogTitle></DialogHeader>
