@@ -1,12 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { createClient } from "@/utils/supabase/client";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -15,109 +9,73 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";
+import { updateMemberNickname } from "@/app/actions/project-members"; // 引用 Server Action
+import { toast } from "sonner";
 
 interface OnboardingGuideProps {
   projectId: string;
   isNewMember: boolean;
+  defaultName?: string; // ✅ 新增這個 prop
 }
 
-export function OnboardingGuide({ projectId, isNewMember }: OnboardingGuideProps) {
-  // ✅ 初始狀態先設為 false，避免 Server/Client 判斷時間差造成閃現
-  const [isOpen, setIsOpen] = useState(false);
-  const [displayName, setDisplayName] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const router = useRouter();
-  const supabase = createClient();
-
-  useEffect(() => {
-    const checkActualStatus = async () => {
-      // 如果 Page.tsx 傳進來是新成員，我們先去資料庫做最後確認
-      if (isNewMember) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        const { data: member } = await supabase
-          .from("project_members")
-          .select("display_name")
-          .eq("project_id", projectId)
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-        // ✅ 只有當資料庫回傳真的沒有 display_name 時，才打開視窗
-        if (!member?.display_name) {
-          setIsOpen(true);
-        }
-      } else {
-        // 如果 Page.tsx 已經判定不是新成員，確保關閉
-        setIsOpen(false);
-      }
-    };
-
-    checkActualStatus();
-  }, [isNewMember, projectId, supabase]);
+export function OnboardingGuide({ projectId, isNewMember, defaultName = "" }: OnboardingGuideProps) {
+  const [isOpen, setIsOpen] = useState(isNewMember);
+  // ✅ 預設值直接使用傳進來的 defaultName
+  const [nickname, setNickname] = useState(defaultName);
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
-    if (!displayName.trim()) return;
-
-    setIsSubmitting(true);
+    if (!nickname.trim()) return;
+    setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("No user found");
-
-      const { error } = await supabase
-        .from("project_members")
-        .update({ display_name: displayName })
-        .eq("project_id", projectId)
-        .eq("user_id", user.id);
-
-      if (error) throw error;
-
+      await updateMemberNickname(projectId, nickname);
       toast.success("歡迎加入！");
       setIsOpen(false);
-      router.refresh(); 
     } catch (error) {
       console.error(error);
-      toast.error("設定失敗，請稍後再試");
+      toast.error("更新失敗，請稍後再試");
     } finally {
-      setIsSubmitting(false);
+      setLoading(false);
     }
   };
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogContent 
-        className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white" 
-        onInteractOutside={(e) => e.preventDefault()}
-      >
+      <DialogContent className="bg-zinc-950 border-zinc-800 text-white sm:max-w-md" onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader>
-          <DialogTitle>歡迎來到這個專案！👋</DialogTitle>
+          <DialogTitle className="text-xl">歡迎來到這個專案！👋</DialogTitle>
           <DialogDescription className="text-zinc-400">
             初次見面，為了讓團隊協作更順暢，請輸入大家該如何稱呼您？
           </DialogDescription>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
-          <div className="grid gap-2">
-            <Label htmlFor="name" className="text-zinc-300">
+
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="nickname" className="text-zinc-300">
               您的暱稱 (Display Name)
             </Label>
             <Input
-              id="name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              id="nickname"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
               placeholder="例如：Andrew, 吉他手小王"
-              className="bg-zinc-800 border-zinc-700 text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-              autoFocus
-              onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+              className="bg-zinc-900 border-zinc-700 text-white focus:border-blue-600"
             />
           </div>
         </div>
+
         <DialogFooter>
           <Button 
             onClick={handleSubmit} 
-            disabled={isSubmitting || !displayName.trim()}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium"
+            disabled={loading || !nickname.trim()}
+            className="w-full bg-blue-600 hover:bg-blue-500 text-white"
           >
-            {isSubmitting ? "儲存中..." : "開始協作"}
+            {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            開始協作
           </Button>
         </DialogFooter>
       </DialogContent>

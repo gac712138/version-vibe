@@ -62,17 +62,21 @@ export function ProjectHeader({ project, currentUserRole }: ProjectHeaderProps) 
     }
   };
 
-  const handleDelete = async () => {
-    // 雖然 confirm 簡單，但建議未來可以換成我們裝好的 AlertDialog 以維持視覺統一
+const handleDelete = async () => {
     if (!confirm("警告：這將刪除整個專案及其所有 Tracks，動作無法復原！")) return;
     
     setIsLoading(true);
     try {
       await deleteProject(project.id);
       toast.success("專案已刪除");
-      // ✅ 刪除成功後務必導回 Dashboard
-      router.push("/dashboard");
+      // 注意：如果 deleteProject 裡面已經有 redirect，這裡的 router.push 可以拿掉
+      // 但為了保險，通常我們會留著 router.push，以防 server action 沒跳轉
     } catch (error: any) { 
+      // ✅ 關鍵修正：忽略 NEXT_REDIRECT 錯誤
+      if (error.message === 'NEXT_REDIRECT') {
+        return; 
+      }
+      console.error(error);
       toast.error("刪除失敗：" + error.message); 
       setIsLoading(false);
     }
