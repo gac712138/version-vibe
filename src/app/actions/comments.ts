@@ -3,8 +3,88 @@
 import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
 
+// 定義回傳給前端的留言型別
+export interface CommentWithUser {
+  id: string;
+  content: string;
+  timestamp: number;
+  created_at: string;
+  user_id: string;
+  // 這是我們要補上的作者資訊
+  author: {
+    display_name: string;
+    avatar_url: string | null;
+  };
+}
+
 /**
- * 新增留言 (包含 @Mention 通知邏輯，並寫入完整追蹤資料)
+ * 取得特定 Asset 的所有留言 (包含作者資訊)
+ */
+export async function getComments(assetId: string, projectId: string): Promise<CommentWithUser[]> {
+  const supabase = await createClient();
+
+  // 1. 抓取留言本體
+  const { data: comments, error } = await supabase
+    .from("comments")
+    .select("*")
+    .eq("asset_id", assetId)
+    .order("timestamp", { ascending: true }); // 依照秒數排序，或依 created_at 排序
+
+  if (error) {
+    console.error("Fetch comments error:", error);
+    return [];
+  }
+
+  if (!comments) return [];
+
+  // 2. 豐富化資料：補上作者的 專案暱稱 與 頭像
+  const enrichedComments = await Promise.all(
+    comments.map(async (c) => {
+      let displayName = "未知成員";
+      let avatarUrl = null;
+
+      // A. 優先查專案成員表 (取得在該專案的暱稱)
+      const { data: member } = await supabase
+        .from("project_members")
+        .select("display_name, avatar_url")
+        .eq("user_id", c.user_id)
+        .eq("project_id", projectId)
+        .maybeSingle();
+
+      if (member) {
+        displayName = member.display_name || displayName;
+        avatarUrl = member.avatar_url;
+      }
+
+      // B. 如果專案表沒資料 (可能已退出)，查全域 Profile
+      if (displayName === "未知成員" || !avatarUrl) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("display_name, avatar_url")
+          .eq("id", c.user_id)
+          .maybeSingle();
+        
+        if (profile) {
+          if (displayName === "未知成員") displayName = profile.display_name || "未知使用者";
+          if (!avatarUrl) avatarUrl = profile.avatar_url;
+        }
+      }
+
+      return {
+        ...c,
+        author: {
+          display_name: displayName,
+          avatar_url: avatarUrl,
+        },
+      };
+    })
+  );
+
+  return enrichedComments;
+}
+
+/**
+ * 新增留言 (原本的程式碼，維持不變)
  */
 export async function createComment(data: {
   content: string;
@@ -34,23 +114,19 @@ export async function createComment(data: {
     throw error;
   }
 
-  // 2. 通知邏輯 (Try-Catch 保護)
+  // 2. 通知邏輯
   try {
     if (data.content.includes("@")) {
-      console.log("🔔 Detected '@', processing notifications...");
-      
       const mentions = data.content.match(/@(\S+)/g);
-
       if (mentions) {
-        // [新增步驟] 為了填寫 track_id，我們需要先查詢這個 asset 屬於哪個 track
-        // 假設你的表名是 audio_assets，且裡面有 track_id 欄位
+        // 查 track_id
         const { data: assetData } = await supabase
             .from("audio_assets")
             .select("track_id")
             .eq("id", data.asset_id)
             .single();
 
-        // 取得專案成員
+        // 查成員
         const { data: members } = await supabase
           .from("project_members")
           .select("user_id, display_name")
@@ -66,19 +142,13 @@ export async function createComment(data: {
             );
 
             if (targetMember && targetMember.user_id !== user.id) {
-              console.log(`✅ Notifying: ${targetMember.display_name}`);
-              
-              // [修正] 寫入完整的資料，包含 asset_id 和 track_id
               await supabase.from("notifications").insert({
                 receiver_id: targetMember.user_id,
                 sender_id: user.id,
                 project_id: data.project_id,
                 comment_id: comment.id,
-                
-                // 👇 這裡補上了！
                 asset_id: data.asset_id,     
-                track_id: assetData?.track_id, // 從資料庫查出來的 ID
-
+                track_id: assetData?.track_id,
                 type: 'mention',
                 content_preview: data.content.substring(0, 50),
                 is_read: false
@@ -92,42 +162,22 @@ export async function createComment(data: {
     console.error("⚠️ Notification Error:", notificationError);
   }
 
-  // 3. 更新快取
   revalidatePath(`/project/${data.project_id}`);
 }
 
-/**
- * 刪除留言
- */
+// ... deleteComment 與 updateComment 維持原本樣子即可
 export async function deleteComment(commentId: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-
   if (!user) throw new Error("Unauthorized");
-
-  const { error } = await supabase
-    .from("comments")
-    .delete()
-    .eq("id", commentId)
-    .eq("user_id", user.id);
-
+  const { error } = await supabase.from("comments").delete().eq("id", commentId).eq("user_id", user.id);
   if (error) throw error;
 }
 
-/**
- * 編輯留言
- */
 export async function updateComment(commentId: string, content: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-
   if (!user) throw new Error("Unauthorized");
-
-  const { error } = await supabase
-    .from("comments")
-    .update({ content })
-    .eq("id", commentId)
-    .eq("user_id", user.id);
-
+  const { error } = await supabase.from("comments").update({ content }).eq("id", commentId).eq("user_id", user.id);
   if (error) throw error;
 }

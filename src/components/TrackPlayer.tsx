@@ -6,12 +6,13 @@ import { PlayerControls } from "./PlayerControls";
 import { VersionList } from "./VersionList";
 import { CommentInput } from "@/app/project/[id]/CommentInput"; 
 import { createClient } from "@/utils/supabase/client";
-import { deleteComment, updateComment } from "@/app/actions/comments";
+import { deleteComment, updateComment, getComments, type CommentWithUser } from "@/app/actions/comments"; // ✅ 引入 getComments 和型別
 import { updateAssetName, deleteAsset } from "@/app/actions/assets"; 
 import { MoreVertical, Pencil, Trash2, X, Check, MoreHorizontal, Edit } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"; // ✅ 引入 Avatar
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,28 +37,22 @@ interface Version {
   storage_path: string;
 }
 
-interface Comment {
-  id: string;
-  content: string;
-  timestamp: number;
-  asset_id: string;
-  user_id: string;
-}
-
 interface TrackPlayerProps {
   projectId: string;
   versions: Version[];
-  canEdit: boolean; // ✅ 修正：新增 canEdit 介面定義，解決 TypeScript 報錯
+  canEdit: boolean;
 }
 
 export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) {
-  // ... (State 和 Hook 邏輯保持不變)
   const router = useRouter();
   const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [comments, setComments] = useState<Comment[]>([]);
+  
+  // ✅ 修改狀態型別：使用包含作者資訊的 CommentWithUser
+  const [comments, setComments] = useState<CommentWithUser[]>([]);
+  
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [shouldPlayAfterSeek, setShouldPlayAfterSeek] = useState(false);
@@ -77,16 +72,17 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     getUser();
   }, [supabase]);
 
+  // ✅ 修改 fetchComments：使用 Server Action 以獲取完整作者資訊
   const fetchComments = useCallback(async () => {
     if (!currentVersion) return;
-    const { data, error } = await supabase
-      .from("comments")
-      .select("*")
-      .eq("asset_id", currentVersion.id)
-      .order("timestamp", { ascending: true });
-    
-    if (!error && data) setComments(data);
-  }, [currentVersion, supabase]);
+    try {
+      // 這裡傳入 projectId 是為了讓後端能查到該成員在這個專案的暱稱
+      const data = await getComments(currentVersion.id, projectId);
+      setComments(data);
+    } catch (error) {
+      console.error("Failed to fetch comments", error);
+    }
+  }, [currentVersion, projectId]); // 加入 projectId 依賴
 
   useEffect(() => {
     fetchComments();
@@ -234,7 +230,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         <div className="lg:col-span-2">
            <div className="relative bg-zinc-900/50 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
               
-              {/* ✨ A. 右上角操作按鈕 (僅 Owner/Admin 可見) */}
               {canEdit && (
                 <div className="absolute top-6 right-6 z-20">
                   <DropdownMenu>
@@ -291,6 +286,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
            </div>
         </div>
         
+        {/* 留言區域 */}
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 flex flex-col h-[600px] shadow-2xl">
           <div className="flex items-center justify-between mb-4 px-1">
             <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">留言反饋</h3>
@@ -308,7 +304,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
             />
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-zinc-800">
+          <div className="flex-1 overflow-y-auto space-y-4 pr-2 scrollbar-thin scrollbar-thumb-zinc-800">
             {comments.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-zinc-600 space-y-2 opacity-50">
                 <p className="text-xs italic">尚無留言，標記你的第一個想法</p>
@@ -321,7 +317,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                   <div 
                     key={c.id} 
                     id={`comment-${c.id}`}
-                    className={`p-3 rounded-lg border-l-4 transition-all ${
+                    className={`p-3 rounded-lg border-l-4 transition-all group ${
                       editingId === c.id 
                         ? "bg-zinc-800 border-blue-500" 
                         : isTargetComment
@@ -329,62 +325,85 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                           : "bg-zinc-800/40 border-transparent border-l-blue-500 hover:bg-zinc-800"
                     }`}
                   >
-                    <div className="flex justify-between items-start mb-2">
-                      <button 
-                        onClick={() => handleSeek(c.timestamp)}
-                        className="text-[10px] font-mono text-blue-400 bg-blue-400/10 px-2 py-1 rounded border border-blue-400/20 active:scale-95 transition-transform"
-                      >
-                        {new Date(c.timestamp * 1000).toISOString().substr(14, 5)}
-                      </button>
+                    {/* ✅ UI 修改：Flex 佈局，左頭像、右內容 */}
+                    <div className="flex gap-3 items-start">
                       
-                      {/* ✅ 改動：Owner 或本人可以管理留言 */}
-                      {(currentUserId === c.user_id || canEdit) && editingId !== c.id && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-zinc-500 hover:text-white">
-                              <MoreVertical className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
-                            <DropdownMenuItem 
-                              onClick={() => { setEditingId(c.id); setEditContent(c.content); }}
-                              className="cursor-pointer focus:bg-zinc-800 focus:text-white"
-                            >
-                              <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
-                            </DropdownMenuItem>
-                            <DropdownMenuItem 
-                              onClick={() => handleCommentDelete(c.id)} 
-                              className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
-                            >
-                              <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
+                      {/* 左側：大頭貼 */}
+                      <Avatar className="w-8 h-8 border border-zinc-700 shrink-0 mt-0.5">
+                        <AvatarImage src={c.author.avatar_url || ""} />
+                        <AvatarFallback className="bg-zinc-700 text-zinc-400 text-[10px]">
+                          {c.author.display_name?.[0]?.toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
 
-                    {editingId === c.id ? (
-                      <div className="animate-in fade-in zoom-in-95 duration-200">
-                        <textarea 
-                          value={editContent} 
-                          onChange={(e) => setEditContent(e.target.value)}
-                          className="w-full bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-white focus:outline-none focus:border-blue-500 min-h-[80px] resize-none"
-                          autoFocus
-                        />
-                        <div className="flex justify-end gap-2 mt-2">
-                          <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-8 text-zinc-400 hover:text-white">
-                            <X className="w-4 h-4 mr-1" /> 取消
-                          </Button>
-                          <Button size="sm" onClick={() => handleCommentUpdate(c.id)} className="h-8 bg-blue-600 hover:bg-blue-700 text-white">
-                            <Check className="w-4 h-4 mr-1" /> 儲存
-                          </Button>
+                      {/* 右側：主要內容 */}
+                      <div className="flex-1 min-w-0">
+                        
+                        {/* Header: 名稱 + 時間 + 操作選單 */}
+                        <div className="flex justify-between items-start mb-1">
+                          <div className="flex items-center gap-2">
+                             <span className="font-bold text-xs text-zinc-300">
+                               {c.author.display_name}
+                             </span>
+                             <button 
+                               onClick={() => handleSeek(c.timestamp)}
+                               className="text-[10px] font-mono text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded hover:bg-blue-400/20 transition-colors"
+                             >
+                               {new Date(c.timestamp * 1000).toISOString().substr(14, 5)}
+                             </button>
+                          </div>
+
+                          {/* 操作選單 (僅顯示給擁有者) */}
+                          {(currentUserId === c.user_id || canEdit) && editingId !== c.id && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <MoreVertical className="w-3.5 h-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
+                                <DropdownMenuItem 
+                                  onClick={() => { setEditingId(c.id); setEditContent(c.content); }}
+                                  className="cursor-pointer focus:bg-zinc-800 focus:text-white"
+                                >
+                                  <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={() => handleCommentDelete(c.id)} 
+                                  className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
+                                >
+                                  <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </div>
+
+                        {/* 留言內容 / 編輯模式 */}
+                        {editingId === c.id ? (
+                          <div className="animate-in fade-in zoom-in-95 duration-200 mt-2">
+                            <textarea 
+                              value={editContent} 
+                              onChange={(e) => setEditContent(e.target.value)}
+                              className="w-full bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-white focus:outline-none focus:border-blue-500 min-h-[80px] resize-none"
+                              autoFocus
+                            />
+                            <div className="flex justify-end gap-2 mt-2">
+                              <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-8 text-zinc-400 hover:text-white">
+                                <X className="w-4 h-4 mr-1" /> 取消
+                              </Button>
+                              <Button size="sm" onClick={() => handleCommentUpdate(c.id)} className="h-8 bg-blue-600 hover:bg-blue-700 text-white">
+                                <Check className="w-4 h-4 mr-1" /> 儲存
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
+                            {c.content}
+                          </p>
+                        )}
                       </div>
-                    ) : (
-                      <p className="text-xs text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
-                        {c.content}
-                      </p>
-                    )}
+                    </div>
                   </div>
                 );
               })
