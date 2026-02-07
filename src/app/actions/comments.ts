@@ -3,7 +3,6 @@
 import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
 
-// 定義回傳給前端的留言型別
 export interface CommentWithUser {
   id: string;
   content: string;
@@ -16,34 +15,40 @@ export interface CommentWithUser {
   };
 }
 
-/**
- * 取得特定 Asset 的所有留言 (包含作者資訊)
- */
-export async function getComments(assetId: string, projectId: string): Promise<CommentWithUser[]> {
+// ✅ 修改：新增 page 與 limit 參數
+export async function getComments(
+  assetId: string, 
+  projectId: string, 
+  page: number = 1, 
+  limit: number = 10
+): Promise<CommentWithUser[]> {
   const supabase = await createClient();
 
-  // 1. 抓取留言本體
+  // 計算範圍 (例如第 1 頁是 0~9, 第 2 頁是 10~19)
+  const from = (page - 1) * limit;
+  const to = from + limit - 1;
+
+  // 1. 抓取留言本體 (加上 range 限制)
   const { data: comments, error } = await supabase
     .from("comments")
     .select("*")
     .eq("asset_id", assetId)
-    .order("timestamp", { ascending: true });
+    .order("created_at", { ascending: false }) // 通常留言是新的在上面，或依需求改成 timestamp
+    .range(from, to); // ✅ 關鍵：只抓取這一段
 
   if (error) {
     console.error("Fetch comments error:", error);
     return [];
   }
 
-  if (!comments) return [];
+  if (!comments || comments.length === 0) return [];
 
-  // 2. 豐富化資料：分別查詢 Profile (頭像) 與 Project Member (暱稱)
+  // 2. 豐富化資料 (這部分邏輯不變，但只會處理這 10 筆，效能更好)
   const enrichedComments = await Promise.all(
     comments.map(async (c) => {
       let displayName = "未知成員";
       let avatarUrl = null;
 
-      // --- 步驟 A: 先查全域 Profile (取得頭像 & 全域名稱當備案) ---
-      // 這是最穩的，通常頭像都在這裡
       const { data: profile } = await supabase
         .from("profiles")
         .select("display_name, avatar_url")
@@ -55,16 +60,14 @@ export async function getComments(assetId: string, projectId: string): Promise<C
         avatarUrl = profile.avatar_url;
       }
 
-      // --- 步驟 B: 嘗試查詢「專案成員表」來覆蓋名稱 ---
       if (projectId) {
         const { data: member } = await supabase
           .from("project_members")
-          .select("display_name") // ✅ 這裡只查 display_name，降低出錯機率
+          .select("display_name")
           .eq("user_id", c.user_id)
           .eq("project_id", projectId)
           .maybeSingle();
 
-        // 如果該成員在這個專案有設定暱稱，就用它覆蓋全域名稱
         if (member && member.display_name) {
           displayName = member.display_name;
         }
