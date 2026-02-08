@@ -45,6 +45,7 @@ interface Version {
   name: string;
   created_at: string;
   storage_path: string;
+  comment_count?: { count: number }[];
 }
 
 interface TrackPlayerProps {

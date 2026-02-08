@@ -1,29 +1,19 @@
 "use client";
 
 import * as React from "react";
-import { Check, ChevronDown, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  //CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
+import { MessageSquare } from "lucide-react";
 
+// ✅ 統一定義 Version 型別，確保與 TrackPlayer 一致
 interface Version {
   id: string;
   version_number: number;
   name: string;
   created_at: string;
   storage_path: string;
+  // ✅ 必須定義為陣列物件格式
+  comment_count?: { count: number }[];
 }
 
 interface VersionListProps {
@@ -40,102 +30,46 @@ export function VersionList({
   onVersionSelect,
   className,
 }: VersionListProps) {
-  const [open, setOpen] = React.useState(false);
-  const selectedVersion = versions.find((v) => v.id === currentVersionId) || versions[0];
-
-  const formatDate = (dateString: string) => {
-    return dateString.split('T')[0];
-  };
-
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className={cn(
-            "w-full justify-between bg-zinc-950/50 border-zinc-800 text-zinc-300 hover:bg-zinc-900 hover:text-white h-12 px-3",
-            className
-          )}
-        >
-          {/* 按鈕內容容器：min-w-0 是 truncate 生效的關鍵 */}
-          <div className="flex items-center flex-1 min-w-0 mr-2">
-            
-            {/* 版本號放在最前 */}
-            <span className="shrink-0 bg-blue-600/20 text-blue-400 text-[10px] font-mono px-1.5 py-0.5 rounded border border-blue-500/30 mr-2">
-              v{selectedVersion?.version_number}
+    <div className={cn("flex flex-col gap-2 w-full", className)}>
+      {versions.map((version) => {
+        const isActive = currentVersionId === version.id;
+
+        // ✅ 核心修正：從 [{ count: n }] 陣列中提取數字
+        // 這樣就能解決 "Type '{ count: number; }[]' is not assignable to type 'number'" 的錯誤
+        const count = version.comment_count?.[0]?.count || 0;
+
+        return (
+          <Button
+            key={version.id}
+            variant="outline"
+            onClick={() => onVersionSelect(version)}
+            className={cn(
+              "w-full h-11 px-4 transition-all duration-200 border text-xs",
+              "rounded-md flex items-center justify-between",
+              isActive
+                ? "bg-blue-600/20 border-blue-500 text-blue-400 shadow-sm"
+                : "bg-zinc-950/50 border-zinc-800 text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300"
+            )}
+          >
+            {/* 左側：檔名 */}
+            <span className="truncate font-medium mr-4">
+              {version.name}
             </span>
 
-            {/* 檔名：加上 truncate */}
-            <span className="truncate text-sm font-medium text-left">
-              {selectedVersion?.name}
-            </span>
-
-            {/* 日期 (手機隱藏) */}
-            <span className="hidden sm:flex items-center ml-auto text-xs text-zinc-500 pl-4 shrink-0">
-               <Clock className="w-3 h-3 mr-1" />
-               {formatDate(selectedVersion?.created_at)}
-            </span>
-          </div>
-          
-          <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-
-      {/* ✅ 關鍵修改：加上 style 強制寬度等於 Trigger 寬度 */}
-      <PopoverContent 
-        className="p-0 bg-zinc-950 border-zinc-800" 
-        align="start"
-        style={{ width: 'var(--radix-popover-trigger-width)' }}
-      >
-        <Command className="bg-zinc-950 text-zinc-300">
-          
-          <CommandList>
-            <CommandEmpty>找不到版本</CommandEmpty>
-            <CommandGroup>
-              {versions.map((version) => (
-                <CommandItem
-                  key={version.id}
-                  value={version.name}
-                  onSelect={() => {
-                    onVersionSelect(version);
-                    setOpen(false);
-                  }}
-                  className="cursor-pointer aria-selected:bg-zinc-900 aria-selected:text-white"
-                >
-                  <div className="flex items-center w-full min-w-0">
-                    <span className={cn(
-                        "shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border mr-2 w-8 text-center",
-                        currentVersionId === version.id 
-                            ? "bg-blue-600 text-white border-blue-500" 
-                            : "bg-zinc-800 text-zinc-400 border-zinc-700"
-                    )}>
-                      v{version.version_number}
-                    </span>
-
-                    {/* ✅ 下拉選單內的檔名也加上 truncate，確保不撐開 */}
-                    <span className={cn(
-                        "truncate text-sm flex-1 text-left",
-                        currentVersionId === version.id ? "text-white font-medium" : "text-zinc-400"
-                    )}>
-                      {version.name}
-                    </span>
-
-                    <span className="hidden sm:block text-xs text-zinc-600 ml-2 shrink-0">
-                        {formatDate(version.created_at)}
-                    </span>
-
-                    {currentVersionId === version.id && (
-                      <Check className="ml-2 h-4 w-4 text-blue-500 shrink-0" />
-                    )}
-                  </div>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+            {/* 右側：留言數顯示 */}
+            <div className={cn(
+              "flex items-center gap-1.5 shrink-0",
+              isActive ? "text-blue-400" : "text-zinc-600"
+            )}>
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span className="font-mono text-[10px]">
+                {count} 則留言
+              </span>
+            </div>
+          </Button>
+        );
+      })}
+    </div>
   );
 }

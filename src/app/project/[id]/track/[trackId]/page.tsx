@@ -20,7 +20,7 @@ export default async function TrackPage({ params }: TrackPageProps) {
 
   if (!user) return redirect("/login");
 
-  // 1. 透過 RPC 獲取歌曲詳情 (避開 RLS 遞迴)
+  // 1. 透過 RPC 獲取歌曲基本詳情
   const { data: context, error: rpcError } = await supabase
     .rpc('get_track_detail_context', { p_track_id: trackId });
 
@@ -29,10 +29,20 @@ export default async function TrackPage({ params }: TrackPageProps) {
     return notFound();
   }
 
-  const { track, assets, project } = context;
+  // 🚀 關鍵修正：重新抓取包含留言計數的 audio_assets
+  // 這是因為 RPC 回傳的 JSON 無法直接進行關聯計數查詢
+  const { data: assetsWithCounts } = await supabase
+    .from("audio_assets")
+    .select(`
+      *,
+      comment_count:comments(count)
+    `)
+    .eq("track_id", trackId);
+
+  const { track, project } = context;
+  const assets = assetsWithCounts || [];
 
   // 2. 🛡️ 獲取當前使用者角色並判斷編輯權限
-  // 透過穩定的 my_projects View 獲取角色，避免觸發 project_members 的遞迴錯誤
   const { data: projectData } = await supabase
     .from("my_projects")
     .select("my_role")
@@ -40,11 +50,10 @@ export default async function TrackPage({ params }: TrackPageProps) {
     .maybeSingle();
 
   const role = projectData?.my_role || 'viewer';
-  // 只有 owner 或 admin 具備編輯與上傳權限
   const canEdit = role === 'owner' || role === 'admin';
 
   // 依照版本號倒序排列
-  const versions = (assets || []).sort((a: any, b: any) => b.version_number - a.version_number);
+  const versions = assets.sort((a: any, b: any) => b.version_number - a.version_number);
 
   return (
     <div className="min-h-screen bg-black text-white flex flex-col">
@@ -70,7 +79,6 @@ export default async function TrackPage({ params }: TrackPageProps) {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* ✅ 只有非 Viewer 才能看到標頭的上傳按鈕 */}
             {canEdit && <UploadVersionBtn projectId={id} trackId={trackId} />}
           </div>
         </div>
@@ -80,7 +88,6 @@ export default async function TrackPage({ params }: TrackPageProps) {
       <main className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-8">
         
         {versions.length === 0 ? (
-          /* Empty State */
           <div className="flex flex-col items-center justify-center py-32 text-center space-y-6 border border-dashed border-zinc-800 rounded-2xl bg-zinc-900/20">
              <div className="relative">
               <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full" />
@@ -95,7 +102,6 @@ export default async function TrackPage({ params }: TrackPageProps) {
               </p>
             </div>
              <div className="mt-4">
-               {/* ✅ 空狀態的上傳按鈕同樣受權限控管 */}
                {canEdit ? (
                  <UploadVersionBtn projectId={id} trackId={trackId} />
                ) : (
@@ -104,7 +110,7 @@ export default async function TrackPage({ params }: TrackPageProps) {
              </div>
           </div>
         ) : (
-          /* ✅ 傳入 canEdit 讓播放器決定是否顯示「重新命名」或「刪除」選單 */
+          /* ✅ 這裡傳入的 versions 已經包含 comment_count 資料 */
           <TrackPlayer projectId={id} versions={versions} canEdit={canEdit} />
         )}
       </main>

@@ -48,15 +48,26 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   let members = membersData || [];
 
   // 3. Fallback: 如果 RPC 連專案都沒抓到 (例如 RPC 沒寫好或報錯)，才跑這裡
-  if (!project) {
+if (!project) {
     const pRes = await supabase.from("projects").select("*").eq("id", id).single();
     if (pRes.error) {
        return notFound();
     }
     project = pRes.data;
     
-    // tracks 也要補抓 (因為上面 RPC 可能失敗)
-    const tRes = await supabase.from("tracks").select("*, audio_assets(*)").eq("project_id", id).order("created_at", { ascending: false });
+    // ✅ 修改這裡：加入留言計數查詢
+    const tRes = await supabase
+      .from("tracks")
+      .select(`
+        *, 
+        audio_assets (
+          *,
+          comment_count:comments(count)
+        )
+      `)
+      .eq("project_id", id)
+      .order("created_at", { ascending: false });
+
     tracks = tRes.data || [];
   }
 
