@@ -69,11 +69,11 @@ export default function LoginPage() {
             ) : (
               <Chrome className="h-5 w-5" />
             )}
-            {isLoading ? "Redirecting..." : "Sign in with Google"}
+            {isLoading ? "登入中..." : "使用google登入"}
           </Button>
           
           <p className="text-xs text-zinc-600 px-8 leading-relaxed">
-            By clicking continue, you agree to our Terms of Service and Privacy Policy.
+            點了繼續，代表您同意平台的服務與隱私權政策
           </p>
         </div>
       </div>
