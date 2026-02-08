@@ -13,7 +13,7 @@ import {
   Command,
   CommandEmpty,
   CommandGroup,
-  CommandInput,
+  //CommandInput,
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
@@ -90,7 +90,7 @@ export function VersionList({
         style={{ width: 'var(--radix-popover-trigger-width)' }}
       >
         <Command className="bg-zinc-950 text-zinc-300">
-          <CommandInput placeholder="搜尋版本..." className="h-9" />
+          
           <CommandList>
             <CommandEmpty>找不到版本</CommandEmpty>
             <CommandGroup>

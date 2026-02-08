@@ -8,7 +8,7 @@ import { TrackComments } from "@/components/track/TrackComments";
 import { createClient } from "@/utils/supabase/client";
 import { getComments, type CommentWithUser } from "@/app/actions/comments"; 
 import { updateAssetName, deleteAsset } from "@/app/actions/assets"; 
-import { MoreHorizontal, Edit, Trash2 } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,17 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
+// ✅ 引入 AlertDialog 相關組件
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface Version {
   id: string;
@@ -55,12 +66,10 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [shouldPlayAfterSeek, setShouldPlayAfterSeek] = useState(false);
 
-  // --- 狀態提升 (Lifted State) ---
   const [comments, setComments] = useState<CommentWithUser[]>([]);
   const [isLoadingComments, setIsLoadingComments] = useState(true);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  // ✅ 新增：分頁狀態管理
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -70,6 +79,30 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [newName, setNewName] = useState("");
 
+  // ✅ 新增：控制刪除彈窗與刪除中狀態
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeletingAsset, setIsDeletingAsset] = useState(false);
+
+  // ✅ 原本的上傳狀態與假進度保持不變
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isUploading) {
+      setUploadProgress(0);
+      interval = setInterval(() => {
+        setUploadProgress((prev) => {
+          if (prev >= 90) return prev; 
+          return prev + Math.random() * 15; 
+        });
+      }, 600);
+    } else {
+      setUploadProgress(0);
+    }
+    return () => clearInterval(interval);
+  }, [isUploading]);
+
   useEffect(() => {
     const getUser = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -78,23 +111,15 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     getUser();
   }, [supabase]);
 
-  // ✅ 1. 初始載入 / 重置 (Reset)
   const fetchInitialComments = useCallback(async () => {
     if (!currentVersion) return;
-    
     setIsLoadingComments(true);
-    setPage(1); // 重置頁數
-
+    setPage(1);
     try {
-      // 模擬載入延遲 (可選)
-      // await new Promise(resolve => setTimeout(resolve, 300));
-
       const { data, count } = await getComments(currentVersion.id, projectId, 1, PAGE_SIZE);
-      
       setComments(data);
-      setTotalCount(count); // 更新總數
-      setHasMore(data.length < count); // 如果抓回來的少於總數，代表還有更多
-
+      setTotalCount(count); 
+      setHasMore(data.length < count); 
     } catch (error) {
       console.error("Failed to fetch comments", error);
     } finally {
@@ -102,27 +127,16 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     }
   }, [currentVersion, projectId]);
 
-  // ✅ 2. 載入更多 (Load More)
   const handleLoadMore = async () => {
     if (!currentVersion || isLoadingMore || !hasMore) return;
-
     setIsLoadingMore(true);
     const nextPage = page + 1;
-
     try {
-      // await new Promise(resolve => setTimeout(resolve, 500)); // 測試捲動動畫用
-
       const { data, count } = await getComments(currentVersion.id, projectId, nextPage, PAGE_SIZE);
-      
-      setComments(prev => [...prev, ...data]); // 追加資料
+      setComments(prev => [...prev, ...data]);
       setTotalCount(count);
       setPage(nextPage);
-      
-      // 判斷是否還有更多：目前顯示數量 + 這次抓的數量 < 總數 ?
-      // 或者更簡單：這次抓回來的是否小於 PAGE_SIZE ? (如果小於代表是最後一頁)
-      // 但用總數判斷最準：
       setHasMore(comments.length + data.length < count);
-
     } catch (error) {
       console.error("Load more failed", error);
     } finally {
@@ -166,14 +180,11 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         setPendingSeekTime(currentPos);
         setShouldPlayAfterSeek(isPlaying); 
     }
-    
-    // 切換版本時，清空狀態
     setComments([]); 
     setIsLoadingComments(true);
     setPage(1);
     setHasMore(true);
     setTotalCount(0);
-    
     setCurrentVersion(version);
   };
 
@@ -202,24 +213,37 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     }
   };
 
-  const handleDeleteAsset = async () => {
+  // ✅ 修正後的刪除按鈕：僅負責打開彈窗
+  const handleDeleteAsset = () => {
     if (!currentVersion) return;
-    if (!confirm(`確定要刪除版本 "${currentVersion.name}" 嗎？此操作無法復原。`)) return;
+    setIsDeleteDialogOpen(true);
+  };
+
+  // ✅ 新增：確認刪除的執行邏輯
+  const confirmDelete = async () => {
+    if (!currentVersion) return;
+    setIsDeletingAsset(true);
     try {
       await deleteAsset(projectId, currentVersion.id);
       toast.success("版本已刪除");
       const remaining = versions.filter(v => v.id !== currentVersion.id);
-      if (remaining.length > 0) setCurrentVersion(remaining[0]);
-      else router.refresh();
+      if (remaining.length > 0) {
+        setCurrentVersion(remaining[0]);
+      } else {
+        router.refresh();
+      }
+      setIsDeleteDialogOpen(false); // 成功後關閉彈窗
       router.refresh();
     } catch (error) {
       console.error(error);
       toast.error("刪除失敗");
+    } finally {
+      setIsDeletingAsset(false);
     }
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-20">
+    <div className="max-w-4xl mx-auto pb-4 px-4 space-y-4">
       <audio
         ref={audioRef}
         preload="auto"
@@ -243,15 +267,11 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         onPause={() => setIsPlaying(false)}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* ✅ 修改 1: 左側播放器 top-24 (拉大距離) */}
-        <div className="lg:col-span-2 sticky top-24 z-30">
-           
-           {/* ✅ 修改 2: 背景改為實色 bg-zinc-950 */}
-           <div className="relative bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
-              
+      <div className="sticky top-[132px] z-30 flex flex-col h-[calc(100vh-140px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+          
+          <div className="relative shrink-0 border-b border-zinc-800/50 bg-zinc-950">
               {canEdit && (
-                <div className="absolute top-6 right-6 z-20">
+                <div className="absolute top-4 right-4 z-20">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-full">
@@ -294,7 +314,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                 />
               </div>
 
-              <div className="px-6 pb-6 pt-2">
+              <div className="px-6 pb-4">
                 <VersionList
                   versions={versions}
                   currentVersionId={currentVersion?.id || null}
@@ -303,26 +323,26 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                   className="w-full"
                 />
               </div>
-           </div>
-        </div>
-        
-        {/* ✅ 修改 3: 右側留言板也加入 sticky，並限制高度，使其獨立捲動 */}
-        <TrackComments 
-           className="sticky top-24 h-[calc(100vh-8rem)]"
-           projectId={projectId}
-           assetId={currentVersion?.id || ""}
-           currentTime={currentTime}
-           canEdit={canEdit}
-           comments={comments}       
-           isLoading={isLoadingComments}
-           isLoadingMore={isLoadingMore} 
-           hasMore={hasMore}             
-           totalCount={totalCount}       
-           currentUserId={currentUserId}
-           onSeek={handleSeek}
-           onRefresh={fetchInitialComments} 
-           onLoadMore={handleLoadMore}   
-        />
+          </div>
+
+          <div className="flex-1 min-h-0 bg-zinc-900/20 px-4">
+            <TrackComments 
+               projectId={projectId}
+               assetId={currentVersion?.id || ""}
+               currentTime={currentTime}
+               canEdit={canEdit}
+               comments={comments}       
+               isLoading={isLoadingComments}
+               isLoadingMore={isLoadingMore} 
+               hasMore={hasMore}             
+               totalCount={totalCount}       
+               currentUserId={currentUserId}
+               onSeek={handleSeek}
+               onRefresh={fetchInitialComments} 
+               onLoadMore={handleLoadMore}
+               className="h-full pb-4" 
+            />
+          </div>
       </div>
 
       <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
@@ -344,6 +364,77 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={isUploading} onOpenChange={() => {}}> 
+        <DialogContent className="sm:max-w-[400px] bg-zinc-950 border-zinc-800 text-white flex flex-col items-center py-10 shadow-2xl backdrop-blur-md">
+          <DialogHeader className="flex flex-col items-center">
+            <div className="relative mb-6">
+              <Loader2 className="w-16 h-16 animate-spin text-blue-600 opacity-20" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
+              </div>
+            </div>
+            <DialogTitle className="text-xl font-bold tracking-tight">正在上傳版本...</DialogTitle>
+          </DialogHeader>
+          
+          <div className="w-full space-y-6 mt-4 px-4">
+            <p className="text-center text-xs text-zinc-400 leading-relaxed">
+              正在上傳檔案，請勿關閉分頁或重新整理。
+            </p>
+            
+            <div className="space-y-2">
+              <div className="flex justify-between text-[10px] font-mono text-zinc-500">
+                <span>UPLOAD PROGRESS</span>
+                <span>{Math.round(uploadProgress)}%</span>
+              </div>
+              <div className="w-full bg-zinc-800 h-1 rounded-full overflow-hidden">
+                <div 
+                  className="bg-blue-600 h-full transition-all duration-500 ease-out" 
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ✅ 新增：刪除版本確認彈窗 (AlertDialog) */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent className="bg-zinc-950 border-zinc-800 text-white shadow-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-500 font-bold flex items-center gap-2 text-lg">
+              <Trash2 className="w-5 h-5" />
+              刪除此版本嗎？
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-zinc-400 mt-2 leading-relaxed">
+              此動作<span className="text-white font-bold mx-1">無法復原</span>。
+              <br className="mb-2"/>
+              版本 <span className="text-zinc-200 font-semibold">"{currentVersion?.name}"</span> 的音檔及相關留言將被永久刪除。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-6">
+            <AlertDialogCancel className="bg-transparent border-zinc-800 hover:bg-zinc-900 text-zinc-400 hover:text-white transition-colors">
+              我再想想
+            </AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={(e) => {
+                e.preventDefault(); 
+                confirmDelete();
+              }}
+              disabled={isDeletingAsset}
+              className="bg-red-600 hover:bg-red-700 text-white border-0 min-w-[110px] shadow-lg shadow-red-900/20"
+            >
+              {isDeletingAsset ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 處理中
+                </>
+              ) : (
+                "確認刪除"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

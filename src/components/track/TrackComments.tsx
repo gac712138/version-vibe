@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback } from "react"; 
 import { type CommentWithUser, deleteComment, updateComment } from "@/app/actions/comments";
 import { CommentInput } from "@/app/project/[id]/CommentInput";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { MoreVertical, Pencil, Trash2, X, Check, Loader2 } from "lucide-react";
+import { MoreVertical, Pencil, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils"; 
 import {
@@ -15,7 +15,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-// 骨架屏保持不變
 function CommentsSkeleton() {
   return (
     <div className="space-y-4 animate-pulse px-1">
@@ -71,7 +70,6 @@ export function TrackComments({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
 
-  // --- 無限捲動偵測 ---
   const observer = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useCallback((node: HTMLDivElement) => {
     if (isLoading || isLoadingMore) return;
@@ -85,7 +83,6 @@ export function TrackComments({
 
     if (node) observer.current.observe(node);
   }, [isLoading, isLoadingMore, hasMore, onLoadMore]);
-  // ------------------
 
   const handleCommentDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
@@ -111,23 +108,18 @@ export function TrackComments({
   };
 
   return (
-    // ✅ 修改重點：
-    // 1. 移除 h-[600px]
-    // 2. 使用 cn() 合併 className
-    <div className={cn(
-      "bg-zinc-900/50 border border-zinc-800 rounded-xl p-4 flex flex-col shadow-2xl",
-      className 
-    )}>
-      {/* Header 加入 shrink-0 防止被壓縮 */}
-      <div className="flex items-center justify-between mb-4 px-1 shrink-0">
+    <div className={cn("flex flex-col h-full", className)}>
+      
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 px-1 shrink-0 pt-4 border-t border-zinc-800">
         <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">留言反饋</h3>
         <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full">
           {isLoading ? "-" : totalCount}
         </span>
       </div>
       
-      {/* 輸入框區塊加入 shrink-0 */}
-      <div className="mb-6 shrink-0">
+      {/* 輸入框 */}
+      <div className="mb-4 shrink-0">
         <CommentInput 
           projectId={projectId} 
           assetId={assetId} 
@@ -136,7 +128,7 @@ export function TrackComments({
         />
       </div>
 
-      {/* 列表區塊：加入 min-h-0 確保 flex 捲動正常 */}
+      {/* 列表區 */}
       <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-zinc-800 min-h-0">
         {isLoading ? (
           <CommentsSkeleton />
@@ -145,10 +137,9 @@ export function TrackComments({
             <p className="text-xs italic">尚無留言，標記你的第一個想法</p>
           </div>
         ) : (
-          <div className="space-y-4 pb-4">
+          <div className="space-y-3 pb-4">
             {comments.map((c, index) => {
               const isLast = index === comments.length - 1;
-              
               return (
                 <div 
                   key={c.id} 
@@ -160,9 +151,13 @@ export function TrackComments({
                   }`}
                 >
                   <div className="flex gap-3 items-start">
-                    <Avatar className="w-8 h-8 border border-zinc-700 shrink-0 mt-0.5">
-                      <AvatarImage src={c.author.avatar_url || ""} />
-                      <AvatarFallback className="bg-zinc-700 text-zinc-400 text-[10px]">
+                    {/* ✅ 修正 Avatar 樣式：加入 overflow-hidden 和 rounded-full */}
+                    <Avatar className="w-8 h-8 border border-zinc-700 shrink-0 mt-0.5 overflow-hidden rounded-full">
+                      <AvatarImage 
+                        src={c.author.avatar_url || undefined} 
+                        className="object-cover w-full h-full" 
+                      />
+                      <AvatarFallback className="bg-zinc-700 text-zinc-400 text-[10px] flex items-center justify-center w-full h-full">
                         {c.author.display_name?.[0]?.toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
@@ -216,10 +211,10 @@ export function TrackComments({
                           />
                           <div className="flex justify-end gap-2 mt-2">
                             <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-8 text-zinc-400 hover:text-white">
-                              <X className="w-4 h-4 mr-1" /> 取消
+                              {/* X icon */} 取消
                             </Button>
                             <Button size="sm" onClick={() => handleCommentUpdate(c.id)} className="h-8 bg-blue-600 hover:bg-blue-700 text-white">
-                              <Check className="w-4 h-4 mr-1" /> 儲存
+                              {/* Check icon */} 儲存
                             </Button>
                           </div>
                         </div>
