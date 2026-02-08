@@ -38,12 +38,12 @@ export function CreateTrackBtn({ projectId }: { projectId: string }) {
       <DialogTrigger asChild>
         <Button className="bg-blue-600 hover:bg-blue-700 gap-2 text-white">
           <Plus className="h-4 w-4" />
-          Add Track
+          新增
         </Button>
       </DialogTrigger>
       <DialogContent className="bg-zinc-950 border-zinc-800 text-white sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Add New Track</DialogTitle>
+          <DialogTitle>新增歌曲</DialogTitle>
         </DialogHeader>
         
         <form action={handleSubmit} className="grid gap-4 py-4">
@@ -52,7 +52,7 @@ export function CreateTrackBtn({ projectId }: { projectId: string }) {
           
           <div className="grid grid-cols-4 items-center gap-4">
             <Label htmlFor="name" className="text-right text-zinc-400">
-              Name
+              曲名
             </Label>
             <Input
               id="name"
@@ -71,7 +71,7 @@ export function CreateTrackBtn({ projectId }: { projectId: string }) {
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Add Track
+              新增
             </Button>
           </DialogFooter>
         </form>

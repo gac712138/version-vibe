@@ -79,7 +79,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
         {/* 左側：音軌列表 */}
         <div className="lg:col-span-2 space-y-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-zinc-400 tracking-wider uppercase">Tracks</h2>
+            <h2 className="text-sm font-bold text-zinc-400 tracking-wider uppercase">歌曲清單</h2>
             <div className="flex items-center gap-4">
               <span className="text-xs text-zinc-600">{tracks.length} songs</span>
               {canEdit && (
@@ -123,7 +123,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
           <div className="border border-zinc-800 rounded-xl bg-zinc-900/30 overflow-hidden">
             <div className="p-5 flex items-center justify-between">
               <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-                <Users className="w-3 h-3" /> Team Members
+                <Users className="w-3 h-3" /> 專案成員
               </h3>
               <span className="text-xs text-zinc-600 bg-zinc-900 px-2 py-0.5 rounded-full">
                 {members.length}

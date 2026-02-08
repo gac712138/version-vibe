@@ -49,20 +49,20 @@ export function OnboardingGuide({ projectId, isNewMember, defaultName = "" }: On
         <DialogHeader>
           <DialogTitle className="text-xl">歡迎來到這個專案！👋</DialogTitle>
           <DialogDescription className="text-zinc-400">
-            初次見面，為了讓團隊協作更順暢，請輸入大家該如何稱呼您？
+            為了讓團隊知道你是誰，大家該如何稱呼您？
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-4">
           <div className="space-y-2">
             <Label htmlFor="nickname" className="text-zinc-300">
-              您的暱稱 (Display Name)
+              您的暱稱
             </Label>
             <Input
               id="nickname"
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
-              placeholder="例如：Andrew, 吉他手小王"
+              placeholder="例如：狗柏 修齊"
               className="bg-zinc-900 border-zinc-700 text-white focus:border-blue-600"
             />
           </div>

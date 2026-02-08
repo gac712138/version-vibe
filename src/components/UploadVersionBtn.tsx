@@ -103,7 +103,7 @@ export function UploadVersionBtn({ projectId, trackId }: Props) {
         className="bg-blue-600 hover:bg-blue-700 gap-2 text-white h-9"
       >
         <Upload className="h-4 w-4" />
-        Upload Version
+        上傳混音
       </Button>
 
       {/* ✅ 上傳進度彈窗 */}

@@ -46,12 +46,12 @@ async function handleSubmit(formData: FormData) {
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button className="gap-2 bg-blue-600 hover:bg-blue-700 text-white border-0">
-          <Plus className="h-4 w-4" /> New Project
+          <Plus className="h-4 w-4" /> 新增專案
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px] bg-zinc-950 border-zinc-800 text-white">
         <DialogHeader>
-          <DialogTitle>Create Project</DialogTitle>
+          <DialogTitle>新增專案</DialogTitle>
           <DialogDescription className="text-zinc-400">
             建立一個新的混音交付專案。
           </DialogDescription>
@@ -61,12 +61,12 @@ async function handleSubmit(formData: FormData) {
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-4 items-center gap-4">
               <Label htmlFor="name" className="text-right text-zinc-300">
-                Name
+                專案名稱
               </Label>
               <Input
                 id="name"
                 name="name"
-                placeholder="e.g. Tiger Island EP"
+                placeholder="EP或專輯名稱"
                 className="col-span-3 bg-zinc-900 border-zinc-700 text-white focus-visible:ring-blue-500"
                 required
               />
@@ -79,7 +79,7 @@ async function handleSubmit(formData: FormData) {
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create
+              建立
             </Button>
           </DialogFooter>
         </form>

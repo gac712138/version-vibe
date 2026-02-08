@@ -29,15 +29,17 @@ export default async function Dashboard() {
     <div className="min-h-screen bg-black text-white p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-8">
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-800 pb-6">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
-            <p className="text-zinc-400 mt-1">
-              Welcome back, {user.user_metadata.full_name || user.email}
-            </p>
-          </div>
-          <CreateProjectBtn />
-        </div>
+        <div className="flex items-center justify-between border-b border-zinc-800 pb-6">
+  <div>
+    <h1 className="text-3xl font-bold tracking-tight">我的專案</h1>
+    <p className="text-zinc-400 mt-1 hidden sm:block">
+      歡迎回來, {user.user_metadata.full_name || user.email}
+    </p>
+  </div>
+  
+  {/* ✅ 按鈕會自動被 flex 推到最右邊 */}
+  <CreateProjectBtn />
+</div>
 
         {/* Project Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -87,9 +89,9 @@ export default async function Dashboard() {
               <div className="bg-zinc-800 p-4 rounded-full mb-4 ring-1 ring-zinc-700">
                 <Music2 className="h-8 w-8 text-zinc-500" />
               </div>
-              <h3 className="text-lg font-semibold text-white mb-1">No projects found</h3>
+              <h3 className="text-lg font-semibold text-white mb-1">目前沒有任何專案</h3>
               <p className="text-zinc-500 mb-6 max-w-sm">
-                Get started by creating your first project.
+                新增你的第一個專案吧
               </p>
               <CreateProjectBtn />
             </div>

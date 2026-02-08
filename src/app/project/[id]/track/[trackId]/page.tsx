@@ -89,9 +89,9 @@ export default async function TrackPage({ params }: TrackPageProps) {
               </div>
             </div>
             <div className="space-y-2">
-              <h3 className="text-xl font-bold text-white">Upload your first mix</h3>
+              <h3 className="text-xl font-bold text-white">新增你的第一版混音</h3>
               <p className="text-zinc-500 max-w-sm mx-auto text-sm">
-                Upload a WAV or MP3 file to create Version 1.
+                上傳mp3 或 WAV檔案.
               </p>
             </div>
              <div className="mt-4">
