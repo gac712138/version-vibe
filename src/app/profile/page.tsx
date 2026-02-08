@@ -12,6 +12,7 @@ import { getCroppedImg } from "@/lib/canvasUtils";
 import { createClient } from "@/utils/supabase/client";
 import { useRouter } from "next/navigation";
 import { deleteAccount } from "@/app/actions/auth"; // ✅ 引入刪除帳號 Action
+import { updateMemberNickname } from "@/app/actions/project-members";
 import {
   Select,
   SelectContent,
@@ -223,20 +224,22 @@ export default function ProfilePage() {
     if (!userId || !selectedProjectId) return;
     setSavingProjectNickname(true);
     try {
-      const { error } = await supabase
-        .from("project_members")
-        .update({ display_name: projectNickname })
-        .eq("project_id", selectedProjectId)
-        .eq("user_id", userId);
+      // ✅ 改用 Server Action，這會執行伺服器端的 revalidatePath
+      await updateMemberNickname(selectedProjectId, projectNickname);
 
-      if (error) throw error;
+      // 手動更新本地狀態，讓 UI 立即反應
       setMemberships(prev => prev.map(m => 
         m.project_id === selectedProjectId ? { ...m, display_name: projectNickname } : m
       ));
+
       toast.success("專案暱稱已更新！");
-    } catch (error) {
+      
+      // ✅ 執行刷新，確保整頁數據同步
+      router.refresh(); 
+      
+    } catch (error: any) {
       console.error(error);
-      toast.error("更新失敗");
+      toast.error("更新失敗：" + error.message);
     } finally {
       setSavingProjectNickname(false);
     }
