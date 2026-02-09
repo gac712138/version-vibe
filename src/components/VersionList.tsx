@@ -64,7 +64,7 @@ export function VersionList({
             )}>
               <MessageSquare className="w-3.5 h-3.5" />
               <span className="font-mono text-[10px]">
-                {count} 則留言
+                {count} 
               </span>
             </div>
           </Button>
