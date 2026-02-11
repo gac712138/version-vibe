@@ -59,7 +59,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const searchParams = useSearchParams();
   const supabase = createClient();
   
-  // ✅ 改用物件形式管理多個音軌的 Ref
+  // ✅ 管理多個音軌的 Ref
   const audioRefs = useRef<Record<string, HTMLAudioElement>>({});
 
   const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
@@ -67,7 +67,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
-  // ✅ 版本獨立音量映射
+  // ✅ 版本獨立音量與靜音
   const [assetVolumes, setAssetVolumes] = useState<Record<string, number>>({});
   const [isMuted, setIsMuted] = useState(false);
 
@@ -86,7 +86,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [isDeletingAsset, setIsDeletingAsset] = useState(false);
   const [isVersionsExpanded, setIsVersionsExpanded] = useState(true);
 
-  // 1. 初始化：載入音量記憶
+  // 1. 初始化音量記憶
   useEffect(() => {
     const savedVolumes = localStorage.getItem("asset-volumes-map");
     if (savedVolumes) {
@@ -94,26 +94,31 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     }
   }, []);
 
-  // 2. 同步：當音量表更新時存入 LocalStorage
+  // 2. 儲存音量記憶到 LocalStorage
   useEffect(() => {
     if (Object.keys(assetVolumes).length > 0) {
       localStorage.setItem("asset-volumes-map", JSON.stringify(assetVolumes));
     }
   }, [assetVolumes]);
 
-  // ✅ 3. 核心：即時同步所有音軌的音量
+  // ✅ 3. 行動裝置相容與多軌靜音邏輯
   useEffect(() => {
     versions.forEach(v => {
       const audio = audioRefs.current[v.id];
       if (audio) {
-        // 如果是當前選中的版本，給予記憶音量；否則靜音 (0)
         const isCurrent = currentVersion?.id === v.id;
-        const targetVol = isCurrent 
-          ? (isMuted ? 0 : (assetVolumes[v.id] ?? 0.9)) 
-          : 0;
-        
-        // 使用平滑過渡避免切換時的爆音 (Pop noise)
-        audio.volume = targetVol;
+        const volSetting = assetVolumes[v.id] ?? 0.9;
+
+        if (!isCurrent) {
+          audio.muted = true; // 非當前音軌強制靜音
+        } else {
+          audio.muted = isMuted || volSetting === 0;
+          try {
+            audio.volume = volSetting; 
+            // 更新目前音軌的時長，因為每個版本長度可能不同
+            if (audio.duration) setDuration(audio.duration);
+          } catch (e) { console.warn(e); }
+        }
       }
     });
   }, [assetVolumes, isMuted, currentVersion, versions]);
@@ -135,11 +140,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       setComments(data);
       setTotalCount(count); 
       setHasMore(data.length < count); 
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsLoadingComments(false);
-    }
+    } catch (error) { console.error(error); } finally { setIsLoadingComments(false); }
   }, [currentVersion, projectId]);
 
   const handleLoadMore = async () => {
@@ -152,46 +153,49 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       setTotalCount(count);
       setPage(nextPage);
       setHasMore(comments.length + data.length < count);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsLoadingMore(false);
-    }
+    } catch (error) { console.error(error); } finally { setIsLoadingMore(false); }
   };
 
   useEffect(() => { fetchInitialComments(); }, [fetchInitialComments]);
 
-  // ✅ 4. 播放控制：同步所有音軌
+  // ✅ 4. 同步播放/暫停
   const togglePlayPause = () => {
     const newState = !isPlaying;
     setIsPlaying(newState);
-    
     Object.values(audioRefs.current).forEach(audio => {
       if (newState) {
-        audio.play().catch(console.error);
+        audio.play().catch(err => console.log("Playback blocked", err));
       } else {
         audio.pause();
       }
     });
   };
 
-  // ✅ 5. 進度跳轉：同步所有音軌
+  // ✅ 5. 同步所有音軌時間點
   const handleSeek = (value: number) => {
     setCurrentTime(value);
     Object.values(audioRefs.current).forEach(audio => {
-      audio.currentTime = value;
+      // 如果跳轉時間超過該音軌長度，則設為該音軌結尾
+      audio.currentTime = Math.min(value, audio.duration || Infinity);
     });
   };
 
-  // ✅ 6. 切換版本：僅改變 UI 狀態，音量同步 Effect 會處理聲音切換
+  // ✅ 6. 切換版本：處理不同時長的無縫對接
   const handleVersionSelect = (version: Version) => {
     if (currentVersion?.id === version.id) {
       togglePlayPause();
       return;
     }
-    setComments([]);
-    setIsLoadingComments(true);
-    setPage(1);
+    
+    const targetAudio = audioRefs.current[version.id];
+    if (targetAudio) {
+      // 如果目前的播放秒數超過目標版本的總長，自動對齊到目標結尾
+      if (currentTime > targetAudio.duration) {
+        handleSeek(targetAudio.duration);
+      }
+      setDuration(targetAudio.duration);
+    }
+    
     setCurrentVersion(version);
   };
 
@@ -225,34 +229,28 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   };
 
   return (
-    <div className="max-w-full mx-auto pb-4 space-y-4">
-      {/* ✅ 7. 背景渲染所有音軌元件實現 Preload */}
-      {versions.map((v) => {
-        const publicUrl = process.env.NEXT_PUBLIC_R2_PUBLIC_URL;
-        const cleanPath = v.storage_path.startsWith('/') ? v.storage_path.slice(1) : v.storage_path;
-        return (
-          <audio
-            key={v.id}
-            ref={(el) => { if (el) audioRefs.current[v.id] = el; }}
-            src={`${publicUrl}/${cleanPath}`}
-            preload="auto"
-            onTimeUpdate={(e) => {
-              // 僅由當前選中版本更新 UI 時間，避免效能浪費
-              if (currentVersion?.id === v.id) {
-                setCurrentTime(e.currentTarget.currentTime);
-              }
-            }}
-            onLoadedMetadata={(e) => {
-              if (currentVersion?.id === v.id) setDuration(e.currentTarget.duration);
-            }}
-            onEnded={() => {
-              if (currentVersion?.id === v.id) setIsPlaying(false);
-            }}
-          />
-        );
-      })}
+    <div className="max-w-full mx-auto pb-4 space-y-4 px-0 md:px-4">
+      {/* 背景渲染所有音軌標籤 */}
+      {versions.map((v) => (
+        <audio
+          key={v.id}
+          ref={(el) => { if (el) audioRefs.current[v.id] = el; }}
+          src={`${process.env.NEXT_PUBLIC_R2_PUBLIC_URL}/${v.storage_path.replace(/^\//, '')}`}
+          preload="auto"
+          playsInline
+          onTimeUpdate={(e) => {
+            if (currentVersion?.id === v.id) setCurrentTime(e.currentTarget.currentTime);
+          }}
+          onLoadedMetadata={(e) => {
+            if (currentVersion?.id === v.id) setDuration(e.currentTarget.duration);
+          }}
+          onEnded={() => {
+            if (currentVersion?.id === v.id) setIsPlaying(false);
+          }}
+        />
+      ))}
 
-      <div className="sticky top-[80px] z-30 flex flex-col h-[calc(100vh-120px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+      <div className="sticky top-[70px] md:top-[80px] z-30 flex flex-col h-[calc(100vh-100px)] md:h-[calc(100vh-120px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
           <div className="relative shrink-0 bg-zinc-950">
               {canEdit && (
                 <div className="absolute top-4 right-4 z-20">
@@ -263,11 +261,11 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
-                      <DropdownMenuItem onClick={() => { if (currentVersion) { setNewName(currentVersion.name); setIsRenameDialogOpen(true); }}} className="cursor-pointer focus:bg-zinc-800 focus:text-white">
+                      <DropdownMenuItem onClick={() => { if (currentVersion) { setNewName(currentVersion.name); setIsRenameDialogOpen(true); }}} className="cursor-pointer focus:bg-zinc-800">
                         <Edit className="mr-2 h-4 w-4" /> 重新命名
                       </DropdownMenuItem>
                       <DropdownMenuSeparator className="bg-zinc-800" />
-                      <DropdownMenuItem onClick={() => setIsDeleteDialogOpen(true)} className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20">
+                      <DropdownMenuItem onClick={() => setIsDeleteDialogOpen(true)} className="cursor-pointer text-red-400">
                         <Trash2 className="mr-2 h-4 w-4" /> 刪除版本
                       </DropdownMenuItem>
                     </DropdownMenuContent>
@@ -275,7 +273,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                 </div>
               )}
 
-              <div className="p-6 pb-2">
+              <div className="p-4 md:p-6 pb-2">
                 <PlayerControls
                   isPlaying={isPlaying}
                   onPlayPauseToggle={togglePlayPause}
@@ -292,23 +290,24 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
               </div>
 
               {isVersionsExpanded && (
-                <div className="px-6 pb-6 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="px-4 md:px-6 pb-4 md:pb-6 animate-in fade-in slide-in-from-top-1">
                   <VersionList versions={versions} currentVersionId={currentVersion?.id || null} isPlaying={isPlaying} onVersionSelect={handleVersionSelect} className="w-full" />
                 </div>
               )}
 
               <div className="relative border-b border-zinc-800/50">
-                <button onClick={() => setIsVersionsExpanded(!isVersionsExpanded)} className="absolute left-1/2 -translate-x-1/2 -top-3 z-40 bg-zinc-950 border border-zinc-800 rounded-full w-16 h-6 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-zinc-900 transition-all shadow-md group">
-                  {isVersionsExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                <button onClick={() => setIsVersionsExpanded(!isVersionsExpanded)} className="absolute left-1/2 -translate-x-1/2 -top-3 z-40 bg-zinc-950 border border-zinc-800 rounded-full w-14 h-6 flex items-center justify-center text-zinc-500 hover:text-white shadow-md">
+                  {isVersionsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 </button>
               </div>
           </div>
 
-          <div className="flex-1 min-h-0 bg-zinc-900/20 px-4 pt-4">
+          <div className="flex-1 min-h-0 bg-zinc-900/20 px-2 md:px-4 pt-4">
             <TrackComments projectId={projectId} assetId={currentVersion?.id || ""} currentTime={currentTime} canEdit={canEdit} comments={comments} isLoading={isLoadingComments} isLoadingMore={isLoadingMore} hasMore={hasMore} totalCount={totalCount} currentUserId={currentUserId} onSeek={handleSeek} onRefresh={fetchInitialComments} onLoadMore={handleLoadMore} className="h-full pb-4" />
           </div>
       </div>
 
+      {/* Dialogs... (與原版一致) */}
       <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white">
           <DialogHeader><DialogTitle>重新命名版本</DialogTitle></DialogHeader>
@@ -326,15 +325,11 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         <AlertDialogContent className="bg-zinc-950 border-zinc-800 text-white">
           <AlertDialogHeader>
             <AlertDialogTitle className="text-red-500">刪除此版本嗎？</AlertDialogTitle>
-            <AlertDialogDescription className="text-zinc-400">
-              此動作無法復原。版本 "{currentVersion?.name}" 的音檔將被永久刪除。
-            </AlertDialogDescription>
+            <AlertDialogDescription className="text-zinc-400">此動作無法復原。音檔與留言將被永久刪除。</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="bg-transparent border-zinc-800 text-zinc-400">取消</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete} disabled={isDeletingAsset} className="bg-red-600">
-              {isDeletingAsset ? <Loader2 className="animate-spin h-4 w-4" /> : "確認刪除"}
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete} disabled={isDeletingAsset} className="bg-red-600">確認刪除</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
