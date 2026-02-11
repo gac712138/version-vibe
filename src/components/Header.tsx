@@ -30,21 +30,25 @@ export function Header() {
     setMounted(true);
   }, []);
 
-  useEffect(() => {
-    // 登入檢查邏輯維持不變...
+useEffect(() => {
     async function getUserData() {
       try {
         const { data: { user } } = await supabase.auth.getUser();
+        
         if (user) {
-          setUser(user);
-          const { data, error } = await supabase
+          // ✅ 1. 先抓取資料庫資料，不要在這邊先 setUser
+          const { data: profileData, error } = await supabase
             .from("profiles")
             .select("display_name, avatar_url")
             .eq("id", user.id)
             .maybeSingle(); 
-          if (!error && data) {
-            setProfile(data);
+
+          // ✅ 2. 拿到所有資料後，再一次性更新狀態
+          // React 會批次處理這兩個狀態更新，避免兩次渲染造成的閃爍
+          if (!error && profileData) {
+            setProfile(profileData);
           }
+          setUser(user);
         }
       } catch (e) {
         console.error("Header load error:", e);

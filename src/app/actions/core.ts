@@ -4,17 +4,38 @@ import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-// ✅ 修改為接收 FormData 以支援圖片上傳
+// ✅ 內部工具：確保 Profile 擁有 Google 的頭像與名稱
+async function syncProfileIfNeeded(supabase: any, user: any) {
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("avatar_url, display")
+    .eq("id", user.id)
+    .single();
+
+  const googleAvatar = user.user_metadata?.avatar_url || user.user_metadata?.picture;
+  const googleName = user.user_metadata?.full_name;
+
+  // 如果資料庫裡沒圖片，但 Google 有，就補上去
+  if (profile && (!profile.avatar_url || !profile.display)) {
+    await supabase.from("profiles").update({
+      avatar_url: profile.avatar_url || googleAvatar,
+      display: profile.display || googleName
+    }).eq("id", user.id);
+  }
+}
+
 export async function updateProjectName(projectId: string, formData: FormData) {
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
   
-  // 1. 提取名稱與檔案
+  // ✅ 每次更新專案時，順便檢查並同步頭像
+  if (user) await syncProfileIfNeeded(supabase, user);
+
   const name = formData.get("name") as string;
   const coverFile = formData.get("cover") as File | null;
 
   if (!name) throw new Error("專案名稱不能為空");
 
-  // 2. 更新專案基礎名稱
   const { error: updateError } = await supabase
     .from("projects")
     .update({ name })
@@ -22,11 +43,8 @@ export async function updateProjectName(projectId: string, formData: FormData) {
 
   if (updateError) throw new Error(updateError.message);
 
-  // 3. 處理圖片更新邏輯
   if (coverFile && coverFile.size > 0) {
     const filePath = `${projectId}/cover-${Date.now()}.jpg`;
-
-    // 上傳至您建立的 project-covers 儲存桶
     const { error: uploadError } = await supabase.storage
       .from("project-covers")
       .upload(filePath, coverFile, {
@@ -39,21 +57,15 @@ export async function updateProjectName(projectId: string, formData: FormData) {
         .from("project-covers")
         .getPublicUrl(filePath);
       
-      // 更新資料庫中的 cover_url 欄位
       await supabase
         .from("projects")
         .update({ cover_url: publicUrl })
         .eq("id", projectId);
-    } else {
-      console.error("Update Cover Error:", uploadError);
-      // 圖片失敗通常不拋出錯誤，讓名稱更新維持成功
     }
   }
 
-  // 重新整理相關頁面快取
   revalidatePath("/dashboard");
   revalidatePath(`/project/${projectId}`);
-  
   return { success: true };
 }
 

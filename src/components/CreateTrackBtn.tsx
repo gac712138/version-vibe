@@ -14,52 +14,75 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Plus, Loader2 } from "lucide-react";
 import { createTrack } from "@/app/actions/create-track";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
-// 接收 projectId 作為參數，因為新增歌曲必須知道是哪張專輯
 export function CreateTrackBtn({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
-  async function handleSubmit(formData: FormData) {
-    setIsLoading(true);
+  // ✅ 改用 onSubmit 手動處理，確保 isLoading 鎖定更及時
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (isLoading) return;
+
+    const formData = new FormData(e.currentTarget);
+    const name = formData.get("name") as string;
+
+    if (!name.trim()) {
+      toast.error("請輸入歌曲名稱");
+      return;
+    }
+
+    setIsLoading(true); // 1. 立即鎖定 UI
+    
     try {
+      // 2. 等待後端完成
       await createTrack(formData);
-      setOpen(false); // 成功後關閉視窗
-    } catch (error) {
-      console.error(error);
-      alert("建立失敗");
-    } finally {
-      setIsLoading(false);
+      
+      // 3. 成功後關閉視窗並重置
+      setOpen(false);
+      toast.success("歌曲已新增");
+    } catch (error: any) {
+      // 處理重定向錯誤
+      if (error.message === 'NEXT_REDIRECT') {
+        setOpen(false);
+        return; 
+      }
+      toast.error("建立失敗：" + error.message);
+      setIsLoading(false); // 失敗才解除鎖定
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(val) => !isLoading && setOpen(val)}>
       <DialogTrigger asChild>
-        <Button className="bg-blue-600 hover:bg-blue-700 gap-2 text-white">
+        <Button className="bg-blue-600 hover:bg-blue-700 gap-2 text-white font-bold px-6 shadow-lg shadow-blue-900/20 transition-all active:scale-95">
           <Plus className="h-4 w-4" />
-          新增
+          新增歌曲
         </Button>
       </DialogTrigger>
-      <DialogContent className="bg-zinc-950 border-zinc-800 text-white sm:max-w-[425px]">
+      
+      <DialogContent className="bg-zinc-950 border-zinc-800 text-white sm:max-w-[400px] rounded-[32px] shadow-2xl">
         <DialogHeader>
-          <DialogTitle>新增歌曲</DialogTitle>
+          <DialogTitle className="text-xl font-bold">新增歌曲</DialogTitle>
         </DialogHeader>
         
-        <form action={handleSubmit} className="grid gap-4 py-4">
+        <form onSubmit={handleSubmit} className="grid gap-6 py-4">
           {/* 隱藏欄位：傳送 Project ID */}
           <input type="hidden" name="projectId" value={projectId} />
           
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="name" className="text-right text-zinc-400">
-              曲名
+          <div className="flex flex-col gap-3">
+            <Label htmlFor="name" className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest ml-1">
+              歌曲名稱
             </Label>
             <Input
               id="name"
               name="name"
-              placeholder="e.g. 01. Intro"
-              className="col-span-3 bg-zinc-900 border-zinc-700 text-white focus-visible:ring-blue-500"
+              placeholder="例如：01. 虎小島序曲"
+              className="bg-zinc-900 border-zinc-800 text-white focus-visible:ring-blue-600 h-12 rounded-xl px-4"
               required
+              disabled={isLoading}
               autoComplete="off"
             />
           </div>
@@ -68,10 +91,20 @@ export function CreateTrackBtn({ projectId }: { projectId: string }) {
             <Button 
               type="submit" 
               disabled={isLoading}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className={cn(
+                "w-full bg-blue-600 hover:bg-blue-500 text-white font-bold h-12 shadow-lg shadow-blue-900/20 transition-all",
+                // ✅ 強制 CSS 禁用效果
+                isLoading && "opacity-70 pointer-events-none cursor-wait"
+              )}
             >
-              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              新增
+              {isLoading ? (
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>歌曲建立中...</span>
+                </div>
+              ) : (
+                "確認新增"
+              )}
             </Button>
           </DialogFooter>
         </form>

@@ -7,7 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ProjectHeader } from "@/components/ProjectHeader";
 import { CreateTrackBtn } from "@/components/CreateTrackBtn"; 
 
-import { OnboardingGuide } from "./OnboardingGuide";
+
 import { InviteSection } from "./InviteSection";
 import { TrackItemActions } from "./TrackItemActions";
 import { MemberActions } from "./MemberActions";
@@ -79,7 +79,6 @@ if (!project) {
 
   return (
     <div className="min-h-screen bg-black text-white pb-20">
-      <OnboardingGuide projectId={id} isNewMember={isNewMember} />
       
       <ProjectHeader 
         project={project} 

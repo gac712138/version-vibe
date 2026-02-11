@@ -7,8 +7,16 @@ import { redirect } from "next/navigation";
 export async function createProject(formData: FormData) {
   const supabase = await createClient();
   
+  // 獲取目前登入的使用者資訊
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
+
+  // ✅ 步驟 0：先從 profiles 表抓取該使用者的顯示名稱
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("display_name")
+    .eq("id", user.id)
+    .single();
 
   const name = formData.get("name") as string;
   const coverFile = formData.get("cover") as File | null;
@@ -28,19 +36,23 @@ export async function createProject(formData: FormData) {
 
   if (error) throw new Error(error.message);
 
-  // 2. ✅ 先將自己加入成員 (Owner)
-  // 這樣做是為了確保後續更新專案 (Update) 時，若有 RLS 檢查成員身份，能順利通過。
+  // 2. ✅ 建立成員資訊，同步寫入 display_name
   const { error: memberError } = await supabase
     .from("project_members")
     .insert({
       project_id: project.id,
       user_id: user.id,
-      role: "owner"
+      role: "owner",
+      // 直接填入 Profile 的顯示名稱，若無則回退至 User ID 或自定義預設值
+      display_name: profile?.display_name || "新成員" 
     });
 
-  if (memberError) console.error("Failed to add owner member:", memberError);
+  if (memberError) {
+    console.error("❌ 無法將 Owner 加入成員清單:", memberError);
+    // 注意：若此處失敗，後續 RLS 可能會導致圖片上傳失敗
+  }
 
-  // 3. ✅ 處理封面圖片上傳與資料庫更新
+  // 3. 處理封面圖片上傳與資料庫更新
   if (coverFile && coverFile.size > 0) {
     const filePath = `${project.id}/cover-${Date.now()}.jpg`;
 
@@ -52,21 +64,18 @@ export async function createProject(formData: FormData) {
       });
 
     if (!uploadError) {
-      // 獲取公開網址
       const { data: { publicUrl } } = supabase.storage
         .from("project-covers")
         .getPublicUrl(filePath);
       
-      // ✅ 更新專案的 cover_url 欄位
       const { error: updateError } = await supabase
         .from("projects")
         .update({ cover_url: publicUrl })
         .eq("id", project.id);
       
-      if (updateError) console.error("❌ 更新資料庫 cover_url 失敗:", updateError);
+      if (updateError) console.error("❌ 更新封面網址失敗:", updateError);
     } else {
-      // 如果這裡報錯，請檢查步驟 1 的 SQL 是否執行成功
-      console.error("❌ 圖片上傳至 Storage 失敗 (RLS 限制):", uploadError);
+      console.error("❌ 圖片上傳至 Storage 失敗:", uploadError);
     }
   }
 

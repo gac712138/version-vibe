@@ -6,16 +6,14 @@ export default async function ProjectJoinPage({ params }: { params: Promise<{ id
   const { id: projectId } = await params;
   const supabase = await createClient();
   
-  // 1. 因為經過了 auth/callback，這裡現在讀得到 user 了！
   const { data: { user } } = await supabase.auth.getUser();
 
-  // 如果還是沒抓到 user (極少見)，才踢回邀請頁
   if (!user) {
     console.error("Join Page: No user found, redirecting to invite.");
     redirect(`/invite/${projectId}`);
   }
 
-  // 2. 檢查是否已經是成員
+  // 檢查是否已經是成員/join/page]
   const { data: existingMember } = await supabase
     .from("project_members")
     .select("id")
@@ -24,32 +22,32 @@ export default async function ProjectJoinPage({ params }: { params: Promise<{ id
     .single();
 
   if (existingMember) {
-    // A. 已經是成員 -> 直接進入專案
-    console.log("User is already a member, redirecting to project.");
     redirect(`/project/${projectId}`);
   } else {
-    // B. 不是成員 -> 加入資料庫
-    console.log("Adding new member...");
+    // ✅ 步驟 1：先抓取受邀者的 Profile 資訊
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("display_name") // 確認您的欄位名稱是 display
+      .eq("id", user.id)
+      .single();
 
-    // 注意：這裡我們只寫入必要資訊
-    // 我們可以選擇不寫入 display_name，這樣進入 Project Page 時
-    // isNewMember = !currentMember.display_name 就會是 true，進而觸發 OnboardingGuide
+    // ✅ 步驟 2：直接寫入資料庫，不留白/join/page]
     const { error } = await supabase
       .from("project_members")
       .insert({
         project_id: projectId,
         user_id: user.id,
-        role: "viewer", // 預設權限
-        // display_name: user.user_metadata.full_name // ❌ 註解掉這行，讓 OnboardingGuide 跳出來給使用者自己填
+        role: "viewer",
+        // 自動帶入全域暱稱，這會讓 OnboardingGuide 的 isNewMember 判定為 false
+        display_name: profile?.display_name || "新成員" 
       });
 
     if (error) {
       console.error("Failed to join project:", error);
-      // 錯誤處理 (可選)
     }
   }
 
-  // 3. 加入完成 -> 進入專案 (這時候會觸發 OnboardingGuide)
+  // 加入完成 -> 進入專案 (現在會直接跳過 Onboarding)
   redirect(`/project/${projectId}`);
 
   return (
