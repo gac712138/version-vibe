@@ -8,10 +8,11 @@ import { TrackComments } from "@/components/track/TrackComments";
 import { createClient } from "@/utils/supabase/client";
 import { getComments, type CommentWithUser } from "@/app/actions/comments"; 
 import { updateAssetName, deleteAsset } from "@/app/actions/assets"; 
-import { MoreHorizontal, Edit, Trash2, Loader2 } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,7 +28,6 @@ import {
   DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
-// ✅ 引入 AlertDialog 相關組件
 import {
   AlertDialog,
   AlertDialogAction,
@@ -79,12 +79,12 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
 
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [newName, setNewName] = useState("");
-
-  // ✅ 新增：控制刪除彈窗與刪除中狀態
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeletingAsset, setIsDeletingAsset] = useState(false);
 
-  // ✅ 原本的上傳狀態與假進度保持不變
+  // ✅ 狀態：控制版本列表是否展開
+  const [isVersionsExpanded, setIsVersionsExpanded] = useState(true);
+
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
@@ -214,13 +214,11 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     }
   };
 
-  // ✅ 修正後的刪除按鈕：僅負責打開彈窗
   const handleDeleteAsset = () => {
     if (!currentVersion) return;
     setIsDeleteDialogOpen(true);
   };
 
-  // ✅ 新增：確認刪除的執行邏輯
   const confirmDelete = async () => {
     if (!currentVersion) return;
     setIsDeletingAsset(true);
@@ -233,7 +231,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       } else {
         router.refresh();
       }
-      setIsDeleteDialogOpen(false); // 成功後關閉彈窗
+      setIsDeleteDialogOpen(false);
       router.refresh();
     } catch (error) {
       console.error(error);
@@ -244,7 +242,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   };
 
   return (
-    <div className="max-w-4xl mx-auto pb-4 px-4 space-y-4">
+    <div className="max-w-full mx-auto pb-4 space-y-4">
       <audio
         ref={audioRef}
         preload="auto"
@@ -268,9 +266,10 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         onPause={() => setIsPlaying(false)}
       />
 
-      <div className="sticky top-[132px] z-30 flex flex-col h-[calc(100vh-140px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+      {/* ✅ 容器高度固定，當版本收合時，留言區 flex-1 會向上長 */}
+      <div className="sticky top-[80px] z-30 flex flex-col h-[calc(100vh-120px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
           
-          <div className="relative shrink-0 border-b border-zinc-800/50 bg-zinc-950">
+          <div className="relative shrink-0 bg-zinc-950">
               {canEdit && (
                 <div className="absolute top-4 right-4 z-20">
                   <DropdownMenu>
@@ -315,18 +314,36 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                 />
               </div>
 
-              <div className="px-6 pb-4">
-                <VersionList
-                  versions={versions}
-                  currentVersionId={currentVersion?.id || null}
-                  isPlaying={isPlaying}
-                  onVersionSelect={handleVersionSelect}
-                  className="w-full"
-                />
+              {/* ✅ 版本列表區域：移除了文字標題 */}
+              {isVersionsExpanded && (
+                <div className="px-6 pb-6 animate-in fade-in slide-in-from-top-1 duration-200">
+                  <VersionList
+                    versions={versions}
+                    currentVersionId={currentVersion?.id || null}
+                    isPlaying={isPlaying}
+                    onVersionSelect={handleVersionSelect}
+                    className="w-full"
+                  />
+                </div>
+              )}
+
+              {/* ✅ 關鍵修改：收合按鈕嵌入在分界線上 */}
+              <div className="relative border-b border-zinc-800/50">
+                <button 
+                  onClick={() => setIsVersionsExpanded(!isVersionsExpanded)}
+                  className="absolute left-1/2 -translate-x-1/2 -top-3 z-40 bg-zinc-950 border border-zinc-800 rounded-full w-16 h-6 flex items-center justify-center text-zinc-500 hover:text-white hover:bg-zinc-900 transition-all shadow-md group"
+                >
+                  {isVersionsExpanded ? (
+                    <ChevronUp className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 group-hover:translate-y-0.5 transition-transform" />
+                  )}
+                </button>
               </div>
           </div>
 
-          <div className="flex-1 min-h-0 bg-zinc-900/20 px-4">
+          {/* ✅ 留言區：使用 flex-1，頂部緊接分界線 */}
+          <div className="flex-1 min-h-0 bg-zinc-900/20 px-4 pt-4">
             <TrackComments 
                projectId={projectId}
                assetId={currentVersion?.id || ""}
@@ -377,29 +394,21 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
             </div>
             <DialogTitle className="text-xl font-bold tracking-tight">正在上傳版本...</DialogTitle>
           </DialogHeader>
-          
           <div className="w-full space-y-6 mt-4 px-4">
-            <p className="text-center text-xs text-zinc-400 leading-relaxed">
-              正在上傳檔案，請勿關閉分頁或重新整理。
-            </p>
-            
+            <p className="text-center text-xs text-zinc-400 leading-relaxed">正在上傳檔案，請勿關閉分頁或重新整理。</p>
             <div className="space-y-2">
               <div className="flex justify-between text-[10px] font-mono text-zinc-500">
                 <span>UPLOAD PROGRESS</span>
                 <span>{Math.round(uploadProgress)}%</span>
               </div>
               <div className="w-full bg-zinc-800 h-1 rounded-full overflow-hidden">
-                <div 
-                  className="bg-blue-600 h-full transition-all duration-500 ease-out" 
-                  style={{ width: `${uploadProgress}%` }}
-                />
+                <div className="bg-blue-600 h-full transition-all duration-500 ease-out" style={{ width: `${uploadProgress}%` }} />
               </div>
             </div>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* ✅ 新增：刪除版本確認彈窗 (AlertDialog) */}
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent className="bg-zinc-950 border-zinc-800 text-white shadow-2xl">
           <AlertDialogHeader>
@@ -408,30 +417,18 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
               刪除此版本嗎？
             </AlertDialogTitle>
             <AlertDialogDescription className="text-zinc-400 mt-2 leading-relaxed">
-              此動作<span className="text-white font-bold mx-1">無法復原</span>。
-              <br className="mb-2"/>
+              此動作<span className="text-white font-bold mx-1">無法復原</span>。<br className="mb-2"/>
               版本 <span className="text-zinc-200 font-semibold">"{currentVersion?.name}"</span> 的音檔及相關留言將被永久刪除。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-6">
-            <AlertDialogCancel className="bg-transparent border-zinc-800 hover:bg-zinc-900 text-zinc-400 hover:text-white transition-colors">
-              我再想想
-            </AlertDialogCancel>
+            <AlertDialogCancel className="bg-transparent border-zinc-800 hover:bg-zinc-900 text-zinc-400 hover:text-white transition-colors">我再想想</AlertDialogCancel>
             <AlertDialogAction 
-              onClick={(e) => {
-                e.preventDefault(); 
-                confirmDelete();
-              }}
+              onClick={(e) => { e.preventDefault(); confirmDelete(); }}
               disabled={isDeletingAsset}
               className="bg-red-600 hover:bg-red-700 text-white border-0 min-w-[110px] shadow-lg shadow-red-900/20"
             >
-              {isDeletingAsset ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> 處理中
-                </>
-              ) : (
-                "確認刪除"
-              )}
+              {isDeletingAsset ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> 處理中</> : "確認刪除"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
