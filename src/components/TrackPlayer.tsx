@@ -59,7 +59,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const searchParams = useSearchParams();
   const supabase = createClient();
   
-  // ✅ 管理多個音軌的 Ref
   const audioRefs = useRef<Record<string, HTMLAudioElement>>({});
 
   const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
@@ -67,7 +66,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
 
-  // ✅ 版本獨立音量與靜音
   const [assetVolumes, setAssetVolumes] = useState<Record<string, number>>({});
   const [isMuted, setIsMuted] = useState(false);
 
@@ -86,7 +84,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [isDeletingAsset, setIsDeletingAsset] = useState(false);
   const [isVersionsExpanded, setIsVersionsExpanded] = useState(true);
 
-  // 1. 初始化音量記憶
   useEffect(() => {
     const savedVolumes = localStorage.getItem("asset-volumes-map");
     if (savedVolumes) {
@@ -94,14 +91,12 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     }
   }, []);
 
-  // 2. 儲存音量記憶到 LocalStorage
   useEffect(() => {
     if (Object.keys(assetVolumes).length > 0) {
       localStorage.setItem("asset-volumes-map", JSON.stringify(assetVolumes));
     }
   }, [assetVolumes]);
 
-  // ✅ 3. 行動裝置相容與多軌靜音邏輯
   useEffect(() => {
     versions.forEach(v => {
       const audio = audioRefs.current[v.id];
@@ -110,7 +105,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         const volSetting = assetVolumes[v.id] ?? 0.9;
 
         if (!isCurrent) {
-          audio.muted = true; // 非當前音軌強制靜音
+          audio.muted = true;
         } else {
           audio.muted = isMuted || volSetting === 0;
           try {
@@ -157,7 +152,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
 
   useEffect(() => { fetchInitialComments(); }, [fetchInitialComments]);
 
-  // ✅ 4. 同步播放/暫停
   const togglePlayPause = () => {
     const newState = !isPlaying;
     setIsPlaying(newState);
@@ -170,7 +164,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     });
   };
 
-  // ✅ 5. 同步所有音軌時間點
   const handleSeek = (value: number) => {
     setCurrentTime(value);
     Object.values(audioRefs.current).forEach(audio => {
@@ -178,13 +171,11 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     });
   };
 
-  // ✅ 6. 切換版本：處理不同時長的無縫對接
   const handleVersionSelect = (version: Version) => {
     if (currentVersion?.id === version.id) {
       togglePlayPause();
       return;
     }
-    
     const targetAudio = audioRefs.current[version.id];
     if (targetAudio) {
       if (currentTime > targetAudio.duration) {
@@ -192,7 +183,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       }
       setDuration(targetAudio.duration);
     }
-    
     setCurrentVersion(version);
   };
 
@@ -227,7 +217,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
 
   return (
     <div className="max-w-full mx-auto pb-4 space-y-4 px-0 md:px-4">
-      {/* 背景渲染所有音軌標籤 */}
       {versions.map((v) => (
         <audio
           key={v.id}
@@ -247,8 +236,8 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         />
       ))}
 
-      {/* ✅ 修復：使用 dvh 解決手機網址列遮擋問題 */}
-      <div className="sticky top-[70px] md:top-[80px] z-30 flex flex-col h-[calc(100dvh-90px)] md:h-[calc(100vh-120px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+      {/* ✅ 修復 1: 高度計算調整，避免手機網址列干擾，確保有空間給捲軸 */}
+      <div className="sticky top-[70px] md:top-[80px] z-30 flex flex-col h-[calc(100vh-140px)] md:h-[calc(100vh-120px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
           <div className="relative shrink-0 bg-zinc-950">
               {canEdit && (
                 <div className="absolute top-4 right-4 z-20">
@@ -300,8 +289,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
               </div>
           </div>
 
-          {/* ✅ 關鍵修復：這裡加上了 flex flex-col */}
-          {/* 沒有 flex flex-col 的話，內部的 TrackComments 的 flex-1 會失效，導致高度崩塌無法捲動 */}
+          {/* ✅ 修復 2: 強制父層 flex-col 與 min-h-0，這對內部滾動是絕對必要的 */}
           <div className="flex-1 flex flex-col min-h-0 bg-zinc-900/20 px-2 md:px-4 pt-4">
             <TrackComments  
                 projectId={projectId} 
@@ -317,7 +305,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
                 onSeek={handleSeek} 
                 onRefresh={fetchInitialComments} 
                 onLoadMore={handleLoadMore} 
-                // 傳入的 className 會正確作用，因為父層現在是 flex column 了
                 className="flex-1 flex flex-col min-h-0" 
             />
           </div>

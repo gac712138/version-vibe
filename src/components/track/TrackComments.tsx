@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo, useEffect } from "react"; 
+import { useState, useRef, useCallback, useMemo } from "react"; 
 import { type CommentWithUser, deleteComment, updateComment } from "@/app/actions/comments";
 import { CommentInput } from "@/app/project/[id]/CommentInput";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -84,16 +84,9 @@ export function TrackComments({
 }: TrackCommentsProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
-  
   const [replyTarget, setReplyTarget] = useState<{ 
-    id: string; 
-    name: string; 
-    rootId: string;
-    content: string;
-    timestamp: number;
+    id: string; name: string; rootId: string; content: string; timestamp: number; 
   } | null>(null);
-
-  // ✅ 改用單一 string 狀態，實現「點擊新的自動收起舊的」
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
   const observer = useRef<IntersectionObserver | null>(null);
@@ -117,14 +110,11 @@ export function TrackComments({
     }));
   }, [comments]);
 
-  // ✅ 2. 父留言互動邏輯：連動展開與回覆狀態
   const handleParentIconClick = (comment: CommentWithUser) => {
     if (activeThreadId === comment.id) {
-      // 點擊第二次：收起子留言 & 取消回覆
       setActiveThreadId(null);
       setReplyTarget(null);
     } else {
-      // 點擊第一次（或點擊別的父留言）：展開該留言 & 設定回覆對象
       setActiveThreadId(comment.id);
       setReplyTarget({
         id: comment.id,
@@ -136,9 +126,7 @@ export function TrackComments({
     }
   };
 
-  // ✅ 子留言互動邏輯
   const handleChildIconClick = (child: CommentWithUser, rootId: string) => {
-    // 保持父留言展開，僅切換回覆對象
     setActiveThreadId(rootId); 
     setReplyTarget({
       id: child.id,
@@ -163,17 +151,10 @@ export function TrackComments({
   const renderCommentItem = (c: CommentWithUser, rootId?: string) => {
     const isReply = !!rootId;
     const isOwner = currentUserId === c.user_id;
-    // 判斷是否為「當前活躍的討論串」
     const isActiveThread = !isReply && activeThreadId === c.id; 
 
     return (
-      <div 
-        key={c.id} 
-        className={cn(
-          "flex gap-3 mb-3 animate-in fade-in slide-in-from-bottom-2 duration-300",
-          isReply && "ml-12"
-        )}
-      >
+      <div key={c.id} className={cn("flex gap-3 mb-3 animate-in fade-in slide-in-from-bottom-2 duration-300", isReply && "ml-12")}>
         <Avatar className="w-9 h-9 border border-zinc-800 shrink-0 overflow-hidden rounded-full mt-1">
           <AvatarImage src={c.author.avatar_url || undefined} className="object-cover" />
           <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center">
@@ -185,11 +166,8 @@ export function TrackComments({
           "flex flex-col p-3 rounded-2xl w-fit min-w-[180px] max-w-[85%] md:max-w-[70%] border shadow-sm relative group transition-colors",
           editingId === c.id 
             ? "bg-zinc-800/80 border-blue-500/50" 
-            : (isActiveThread || isReply) // 展開時父留言高亮，或子留言
-              ? "bg-zinc-900/40 border-zinc-800/50" 
-              : "bg-zinc-900/60 border-zinc-800"
+            : (isActiveThread || isReply) ? "bg-zinc-900/40 border-zinc-800/50" : "bg-zinc-900/60 border-zinc-800"
         )}>
-          
           <div className="flex justify-between items-center gap-4 mb-1.5 h-5">
             <div className="flex items-center gap-2">
               <span className="font-bold text-xs text-zinc-200">{c.author.display_name}</span>
@@ -197,7 +175,6 @@ export function TrackComments({
                 {getRelativeTime(c.created_at)}
               </span>
             </div>
-
             {isOwner && editingId !== c.id && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -206,12 +183,8 @@ export function TrackComments({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
-                  <DropdownMenuItem onClick={() => { setEditingId(c.id); setEditContent(c.content); }} className="cursor-pointer text-xs">
-                    <Pencil className="mr-2 h-3 w-3" /> 編輯
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleCommentDelete(c.id)} className="cursor-pointer text-xs text-red-400">
-                    <Trash2 className="mr-2 h-3 w-3" /> 刪除
-                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => { setEditingId(c.id); setEditContent(c.content); }} className="cursor-pointer text-xs"><Pencil className="mr-2 h-3 w-3" /> 編輯</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleCommentDelete(c.id)} className="cursor-pointer text-xs text-red-400"><Trash2 className="mr-2 h-3 w-3" /> 刪除</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -234,18 +207,12 @@ export function TrackComments({
             <div className="flex items-end gap-2">
                <div className="flex-1 min-w-0">
                   <div className="inline">
-                    <button 
-                      onClick={() => onSeek(c.timestamp)}
-                      className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 hover:bg-blue-500/20 transition-colors align-middle cursor-pointer"
-                      style={{ transform: "translateY(-1px)" }} 
-                    >
+                    <button onClick={() => onSeek(c.timestamp)} className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 hover:bg-blue-500/20 transition-colors align-middle cursor-pointer" style={{ transform: "translateY(-1px)" }}>
                       {formatTime(c.timestamp)}
                     </button>
                     <ParsedCommentContent content={c.content} />
                   </div>
                </div>
-               
-               {/* ✅ 1. 留言數字放到 Icon 右邊 */}
                <div className="shrink-0 flex items-center ml-1 h-5 self-end opacity-70 group-hover:opacity-100 transition-opacity">
                   <Button 
                     variant="ghost" 
@@ -270,35 +237,28 @@ export function TrackComments({
   };
 
   return (
-    // ✅ 3. 手機版滾動修復：最外層加入 min-h-0，這對 Flex 巢狀滾動至關重要
+    // ✅ 關鍵：min-h-0 確保 Flexbox 高度能正確收縮
     <div className={cn("flex flex-col h-full bg-zinc-950/20 min-h-0", className)}>
       <div className="flex items-center justify-between p-4 shrink-0 border-b border-zinc-800 bg-zinc-950/50 backdrop-blur-sm z-10">
         <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">留言反饋</h3>
-        <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full">
-          {isLoading ? "-" : totalCount}
-        </span>
+        <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full">{isLoading ? "-" : totalCount}</span>
       </div>
 
-      {/* ✅ 3. 手機版滾動修復：加入 touch-auto 與 overscroll-y-contain */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-zinc-800 overscroll-y-contain touch-auto">
+      {/* ✅ 移除 touch-auto 與 overscroll-contain，改用標準 overflow-y-auto */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-zinc-800">
         {isLoading ? (
           <CommentsSkeleton />
         ) : (
-          // ✅ 加入 pb-24 避免最後一則留言被 fixed input 擋住
           <div className="space-y-1 pb-24">
             {threadedComments.length === 0 ? (
-              <div className="py-20 flex flex-col items-center justify-center text-zinc-700 space-y-2 opacity-50">
-                <p className="text-xs italic tracking-widest uppercase">No Feedback Yet</p>
-              </div>
+              <div className="py-20 flex flex-col items-center justify-center text-zinc-700 space-y-2 opacity-50"><p className="text-xs italic tracking-widest uppercase">No Feedback Yet</p></div>
             ) : (
               threadedComments.map((root, index) => {
                 const isLast = index === threadedComments.length - 1;
-                // 使用 activeThreadId 判斷展開
                 const isExpanded = activeThreadId === root.id;
                 return (
                   <div key={root.id} ref={isLast ? lastElementRef : null} className="space-y-1">
                     {renderCommentItem(root)}
-                    
                     {isExpanded && root.replies.length > 0 && (
                       <div className="relative mt-1 mb-4 animate-in slide-in-from-top-2 duration-200">
                         <div className="absolute left-[26px] top-0 bottom-4 w-[2px] bg-zinc-800/40 rounded-full" />
@@ -309,9 +269,7 @@ export function TrackComments({
                 );
               })
             )}
-            {isLoadingMore && (
-              <div className="py-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-zinc-600" /></div>
-            )}
+            {isLoadingMore && <div className="py-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-zinc-600" /></div>}
           </div>
         )}
       </div>
@@ -322,29 +280,15 @@ export function TrackComments({
              <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden text-sm">
                 <span className="text-blue-400 font-bold shrink-0">回覆 {replyTarget.name}</span>
                 <span className="text-zinc-500 font-mono text-xs shrink-0">[{formatTime(replyTarget.timestamp)}]</span>
-                <span className="text-zinc-400 truncate opacity-90 block flex-1">
-                  ：{replyTarget.content}
-                </span>
+                <span className="text-zinc-400 truncate opacity-90 block flex-1">：{replyTarget.content}</span>
              </div>
-             <button 
-               onClick={() => { setReplyTarget(null); /* 可選：若想取消回覆時也收起串，可加 setActiveThreadId(null) */ }} 
-               className="text-zinc-500 hover:text-white transition-colors shrink-0 p-1"
-             >
-               <X size={16} />
-             </button>
+             <button onClick={() => setReplyTarget(null)} className="text-zinc-500 hover:text-white transition-colors shrink-0 p-1"><X size={16} /></button>
           </div>
         )}
-
         <CommentInput 
-          projectId={projectId} 
-          assetId={assetId} 
-          currentTime={currentTime}
+          projectId={projectId} assetId={assetId} currentTime={currentTime} 
           parentId={replyTarget?.rootId} 
-          onCommentSuccess={() => { 
-             setReplyTarget(null); 
-             // 留言後可以選擇不收起，方便查看新留言，故保留 activeThreadId
-             onRefresh(); 
-          }} 
+          onCommentSuccess={() => { setReplyTarget(null); onRefresh(); }} 
           initialValue={replyTarget ? `@${replyTarget.name} ` : ""}
         />
       </div>
