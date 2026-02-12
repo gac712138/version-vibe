@@ -3,26 +3,29 @@
 import { createClient } from "@/utils/supabase/server";
 import { revalidatePath } from "next/cache";
 
-
-
 export interface CommentWithUser {
   id: string;
   content: string;
   timestamp: number;
   created_at: string;
   user_id: string;
+  // ✅ 新增：支援回覆功能
+  parent_id?: string | null; 
+  replyCount?: number;
   author: {
     display_name: string;
     avatar_url: string | null;
   };
 }
 
-// ✅ 修改回傳型別
 export interface GetCommentsResponse {
   data: CommentWithUser[];
   count: number;
 }
 
+/**
+ * 獲取留言列表
+ */
 export async function getComments(
   assetId: string, 
   projectId: string, 
@@ -34,7 +37,7 @@ export async function getComments(
   const from = (page - 1) * limit;
   const to = from + limit - 1;
 
-  // 1. 抓取留言
+  // 1. 抓取留言 (原本的 select("*") 就會包含 parent_id)
   const { data: comments, count, error } = await supabase
     .from("comments")
     .select("*", { count: "exact" })
@@ -53,23 +56,20 @@ export async function getComments(
       let displayName = "未知成員";
       let avatarUrl: string | null = null;
 
-      // ✅ 修正點 1：select 必須包含 avatar_url
       if (projectId) {
         const { data: member } = await supabase
           .from("project_members")
-          .select("display_name, avatar_url") // 原本只選了 display_name
+          .select("display_name, avatar_url")
           .eq("user_id", c.user_id)
           .eq("project_id", projectId)
           .maybeSingle();
 
         if (member) {
           if (member.display_name) displayName = member.display_name;
-          if (member.avatar_url) avatarUrl = member.avatar_url; // 取得專案內頭像
+          if (member.avatar_url) avatarUrl = member.avatar_url;
         }
       }
 
-      // ✅ 修正點 2：邏輯判斷優化
-      // 如果「名字還是未知」 OR 「還沒取得頭像」，就去全域 profiles 補齊
       if (displayName === "未知成員" || !avatarUrl) {
          const { data: profile } = await supabase
             .from("profiles")
@@ -78,7 +78,6 @@ export async function getComments(
             .maybeSingle();
 
          if (profile) {
-            // 只有在還沒拿到資料的情況下才更新，避免覆蓋專案內的自訂資料
             if (displayName === "未知成員") displayName = profile.display_name || "未知使用者";
             if (!avatarUrl) avatarUrl = profile.avatar_url;
          }
@@ -90,7 +89,7 @@ export async function getComments(
           display_name: displayName,
           avatar_url: avatarUrl,
         },
-      };
+      } as CommentWithUser; // 強制轉型確保包含 parent_id
     })
   );
 
@@ -99,14 +98,17 @@ export async function getComments(
     count: count || 0 
   }; 
 }
+
 /**
- * 新增留言
+ * 新增留言 (支援回覆)
  */
 export async function createComment(data: {
   content: string;
   timestamp: number;
   asset_id: string;
   project_id: string;
+  // ✅ 新增：允許傳入父留言 ID
+  parent_id?: string; 
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -121,6 +123,8 @@ export async function createComment(data: {
       timestamp: data.timestamp,
       asset_id: data.asset_id,
       user_id: user.id,
+      // ✅ 關鍵修正：將 parent_id 寫入資料庫
+      parent_id: data.parent_id || null, 
     })
     .select()
     .single();
@@ -130,19 +134,17 @@ export async function createComment(data: {
     throw error;
   }
 
-  // 2. 通知邏輯
+  // 2. 通知邏輯 (保持不變)
   try {
     if (data.content.includes("@")) {
       const mentions = data.content.match(/@(\S+)/g);
       if (mentions) {
-        // 查 track_id
         const { data: assetData } = await supabase
             .from("audio_assets")
             .select("track_id")
             .eq("id", data.asset_id)
             .single();
 
-        // 查成員
         const { data: members } = await supabase
           .from("project_members")
           .select("user_id, display_name")

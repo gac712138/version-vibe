@@ -115,7 +115,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
           audio.muted = isMuted || volSetting === 0;
           try {
             audio.volume = volSetting; 
-            // 更新目前音軌的時長，因為每個版本長度可能不同
             if (audio.duration) setDuration(audio.duration);
           } catch (e) { console.warn(e); }
         }
@@ -175,7 +174,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const handleSeek = (value: number) => {
     setCurrentTime(value);
     Object.values(audioRefs.current).forEach(audio => {
-      // 如果跳轉時間超過該音軌長度，則設為該音軌結尾
       audio.currentTime = Math.min(value, audio.duration || Infinity);
     });
   };
@@ -189,7 +187,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     
     const targetAudio = audioRefs.current[version.id];
     if (targetAudio) {
-      // 如果目前的播放秒數超過目標版本的總長，自動對齊到目標結尾
       if (currentTime > targetAudio.duration) {
         handleSeek(targetAudio.duration);
       }
@@ -250,7 +247,8 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         />
       ))}
 
-      <div className="sticky top-[70px] md:top-[80px] z-30 flex flex-col h-[calc(100vh-100px)] md:h-[calc(100vh-120px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
+      {/* ✅ 修復：使用 dvh 解決手機網址列遮擋問題 */}
+      <div className="sticky top-[70px] md:top-[80px] z-30 flex flex-col h-[calc(100dvh-90px)] md:h-[calc(100vh-120px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
           <div className="relative shrink-0 bg-zinc-950">
               {canEdit && (
                 <div className="absolute top-4 right-4 z-20">
@@ -302,12 +300,29 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
               </div>
           </div>
 
-          <div className="flex-1 min-h-0 bg-zinc-900/20 px-2 md:px-4 pt-4">
-            <TrackComments projectId={projectId} assetId={currentVersion?.id || ""} currentTime={currentTime} canEdit={canEdit} comments={comments} isLoading={isLoadingComments} isLoadingMore={isLoadingMore} hasMore={hasMore} totalCount={totalCount} currentUserId={currentUserId} onSeek={handleSeek} onRefresh={fetchInitialComments} onLoadMore={handleLoadMore} className="h-full pb-4" />
+          {/* ✅ 關鍵修復：這裡加上了 flex flex-col */}
+          {/* 沒有 flex flex-col 的話，內部的 TrackComments 的 flex-1 會失效，導致高度崩塌無法捲動 */}
+          <div className="flex-1 flex flex-col min-h-0 bg-zinc-900/20 px-2 md:px-4 pt-4">
+            <TrackComments  
+                projectId={projectId} 
+                assetId={currentVersion?.id || ""} 
+                currentTime={currentTime} 
+                canEdit={canEdit} 
+                comments={comments} 
+                isLoading={isLoadingComments} 
+                isLoadingMore={isLoadingMore} 
+                hasMore={hasMore} 
+                totalCount={totalCount} 
+                currentUserId={currentUserId} 
+                onSeek={handleSeek} 
+                onRefresh={fetchInitialComments} 
+                onLoadMore={handleLoadMore} 
+                // 傳入的 className 會正確作用，因為父層現在是 flex column 了
+                className="flex-1 flex flex-col min-h-0" 
+            />
           </div>
       </div>
 
-      {/* Dialogs... (與原版一致) */}
       <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white">
           <DialogHeader><DialogTitle>重新命名版本</DialogTitle></DialogHeader>

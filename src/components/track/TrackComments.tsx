@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react"; 
+import { useState, useRef, useCallback, useMemo, useEffect } from "react"; 
 import { type CommentWithUser, deleteComment, updateComment } from "@/app/actions/comments";
 import { CommentInput } from "@/app/project/[id]/CommentInput";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { MoreVertical, Pencil, Trash2, Loader2 } from "lucide-react";
+import { MoreHorizontal, Pencil, Trash2, Loader2, MessageSquare, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils"; 
 import {
@@ -15,18 +15,46 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+function getRelativeTime(dateString: string) {
+  if (!dateString) return "剛剛";
+  const now = new Date();
+  const past = new Date(dateString);
+  const diffInSeconds = Math.max(0, Math.floor((now.getTime() - past.getTime()) / 1000));
+
+  if (diffInSeconds < 60) return "剛剛";
+  const diffInMinutes = Math.floor(diffInSeconds / 60);
+  if (diffInMinutes < 60) return `${diffInMinutes}分鐘前`;
+  const diffInHours = Math.floor(diffInMinutes / 60);
+  if (diffInHours < 24) return `${diffInHours}小時前`;
+  const diffInDays = Math.floor(diffInHours / 24);
+  if (diffInDays < 7) return `${diffInDays}天前`;
+  return past.toLocaleDateString();
+}
+
+function ParsedCommentContent({ content }: { content: string }) {
+  const parts = content.split(/(@\S+)/g);
+  return (
+    <span className="text-sm text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
+      {parts.map((part, i) => 
+        part.startsWith("@") ? (
+          <span key={i} className="text-blue-400 font-bold">{part}</span>
+        ) : (
+          part
+        )
+      )}
+    </span>
+  );
+}
+
 function CommentsSkeleton() {
   return (
     <div className="space-y-4 animate-pulse px-1">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="flex gap-3 p-3 rounded-lg bg-zinc-800/50 border border-zinc-700/50">
-          <div className="w-8 h-8 bg-zinc-600 rounded-full shrink-0" />
-          <div className="flex-1 space-y-2 py-1">
-            <div className="flex justify-between">
-              <div className="h-3 bg-zinc-600 rounded w-20" />
-              <div className="h-3 bg-zinc-700 rounded w-10" />
-            </div>
-            <div className="h-4 bg-zinc-700 rounded w-3/4" />
+        <div key={i} className="flex gap-4 p-4 rounded-xl bg-zinc-900/50">
+          <div className="w-10 h-10 bg-zinc-800 rounded-full shrink-0" />
+          <div className="flex-1 space-y-3 py-1">
+            <div className="h-3 bg-zinc-800 rounded w-1/4" />
+            <div className="h-4 bg-zinc-800 rounded w-3/4" />
           </div>
         </div>
       ))}
@@ -52,37 +80,74 @@ interface TrackCommentsProps {
 }
 
 export function TrackComments({ 
-  projectId, 
-  assetId, 
-  currentTime, 
-  canEdit,
-  comments,
-  totalCount,
-  isLoading,
-  isLoadingMore,
-  currentUserId,
-  onSeek,
-  onRefresh,
-  onLoadMore,
-  hasMore,
-  className 
+  projectId, assetId, currentTime, canEdit, comments, totalCount, isLoading, isLoadingMore, currentUserId, onSeek, onRefresh, onLoadMore, hasMore, className 
 }: TrackCommentsProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
+  
+  const [replyTarget, setReplyTarget] = useState<{ 
+    id: string; 
+    name: string; 
+    rootId: string;
+    content: string;
+    timestamp: number;
+  } | null>(null);
+
+  // ✅ 改用單一 string 狀態，實現「點擊新的自動收起舊的」
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
   const observer = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useCallback((node: HTMLDivElement) => {
     if (isLoading || isLoadingMore) return;
     if (observer.current) observer.current.disconnect();
-
     observer.current = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && hasMore) {
-        onLoadMore();
-      }
+      if (entries[0].isIntersecting && hasMore) onLoadMore();
     });
-
     if (node) observer.current.observe(node);
   }, [isLoading, isLoadingMore, hasMore, onLoadMore]);
+
+  const threadedComments = useMemo(() => {
+    const roots = comments.filter(c => !c.parent_id);
+    const replies = comments.filter(c => c.parent_id);
+    return roots.map(root => ({
+      ...root,
+      replyCount: replies.filter(r => r.parent_id === root.id).length,
+      replies: replies.filter(r => r.parent_id === root.id)
+        .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    }));
+  }, [comments]);
+
+  // ✅ 2. 父留言互動邏輯：連動展開與回覆狀態
+  const handleParentIconClick = (comment: CommentWithUser) => {
+    if (activeThreadId === comment.id) {
+      // 點擊第二次：收起子留言 & 取消回覆
+      setActiveThreadId(null);
+      setReplyTarget(null);
+    } else {
+      // 點擊第一次（或點擊別的父留言）：展開該留言 & 設定回覆對象
+      setActiveThreadId(comment.id);
+      setReplyTarget({
+        id: comment.id,
+        name: comment.author.display_name,
+        rootId: comment.id,
+        content: comment.content,
+        timestamp: comment.timestamp
+      });
+    }
+  };
+
+  // ✅ 子留言互動邏輯
+  const handleChildIconClick = (child: CommentWithUser, rootId: string) => {
+    // 保持父留言展開，僅切換回覆對象
+    setActiveThreadId(rootId); 
+    setReplyTarget({
+      id: child.id,
+      name: child.author.display_name,
+      rootId: rootId,
+      content: child.content,
+      timestamp: child.timestamp
+    });
+  };
 
   const handleCommentDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
@@ -90,158 +155,198 @@ export function TrackComments({
       await deleteComment(id);
       toast.success("留言已刪除");
       onRefresh();
-    } catch (error) {
-      toast.error("刪除失敗");
-    }
+    } catch (error) { toast.error("刪除失敗"); }
   };
 
-  const handleCommentUpdate = async (id: string) => {
-    if (!editContent.trim()) return;
-    try {
-      await updateComment(id, editContent);
-      setEditingId(null);
-      toast.success("留言已更新");
-      onRefresh();
-    } catch (error) {
-      toast.error("更新失敗");
-    }
+  const formatTime = (sec: number) => new Date(sec * 1000).toISOString().substr(14, 5);
+
+  const renderCommentItem = (c: CommentWithUser, rootId?: string) => {
+    const isReply = !!rootId;
+    const isOwner = currentUserId === c.user_id;
+    // 判斷是否為「當前活躍的討論串」
+    const isActiveThread = !isReply && activeThreadId === c.id; 
+
+    return (
+      <div 
+        key={c.id} 
+        className={cn(
+          "flex gap-3 mb-3 animate-in fade-in slide-in-from-bottom-2 duration-300",
+          isReply && "ml-12"
+        )}
+      >
+        <Avatar className="w-9 h-9 border border-zinc-800 shrink-0 overflow-hidden rounded-full mt-1">
+          <AvatarImage src={c.author.avatar_url || undefined} className="object-cover" />
+          <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center">
+            {c.author.display_name?.[0]?.toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+
+        <div className={cn(
+          "flex flex-col p-3 rounded-2xl w-fit min-w-[180px] max-w-[85%] md:max-w-[70%] border shadow-sm relative group transition-colors",
+          editingId === c.id 
+            ? "bg-zinc-800/80 border-blue-500/50" 
+            : (isActiveThread || isReply) // 展開時父留言高亮，或子留言
+              ? "bg-zinc-900/40 border-zinc-800/50" 
+              : "bg-zinc-900/60 border-zinc-800"
+        )}>
+          
+          <div className="flex justify-between items-center gap-4 mb-1.5 h-5">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-xs text-zinc-200">{c.author.display_name}</span>
+              <span suppressHydrationWarning className="text-[10px] text-zinc-500 font-medium whitespace-nowrap">
+                {getRelativeTime(c.created_at)}
+              </span>
+            </div>
+
+            {isOwner && editingId !== c.id && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-5 w-5 -mr-1 text-zinc-600 hover:text-white shrink-0">
+                    <MoreHorizontal size={14} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
+                  <DropdownMenuItem onClick={() => { setEditingId(c.id); setEditContent(c.content); }} className="cursor-pointer text-xs">
+                    <Pencil className="mr-2 h-3 w-3" /> 編輯
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleCommentDelete(c.id)} className="cursor-pointer text-xs text-red-400">
+                    <Trash2 className="mr-2 h-3 w-3" /> 刪除
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+
+          {editingId === c.id ? (
+            <div className="w-full">
+              <textarea 
+                value={editContent} 
+                onChange={(e) => setEditContent(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-700 rounded-md p-2 text-sm text-white focus:border-blue-500 outline-none resize-none min-h-[60px]"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2 mt-2">
+                <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-6 text-xs text-zinc-500">取消</Button>
+                <Button size="sm" onClick={() => updateComment(c.id, editContent).then(onRefresh).then(() => setEditingId(null))} className="h-6 text-xs bg-blue-600 text-white">儲存</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-end gap-2">
+               <div className="flex-1 min-w-0">
+                  <div className="inline">
+                    <button 
+                      onClick={() => onSeek(c.timestamp)}
+                      className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 hover:bg-blue-500/20 transition-colors align-middle cursor-pointer"
+                      style={{ transform: "translateY(-1px)" }} 
+                    >
+                      {formatTime(c.timestamp)}
+                    </button>
+                    <ParsedCommentContent content={c.content} />
+                  </div>
+               </div>
+               
+               {/* ✅ 1. 留言數字放到 Icon 右邊 */}
+               <div className="shrink-0 flex items-center ml-1 h-5 self-end opacity-70 group-hover:opacity-100 transition-opacity">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className={cn(
+                      "h-6 w-6 rounded-full",
+                      (isActiveThread || replyTarget?.id === c.id) ? "text-blue-500" : "text-zinc-500 hover:text-blue-400"
+                    )}
+                    onClick={() => isReply ? handleChildIconClick(c, rootId!) : handleParentIconClick(c)}
+                  >
+                    <MessageSquare size={14} />
+                  </Button>
+                  {!isReply && (c.replyCount ?? 0) > 0 && (
+                    <span className="text-[10px] font-bold text-zinc-500 tabular-nums ml-1">{c.replyCount}</span>
+                  )}
+               </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   return (
-    <div className={cn("flex flex-col h-full", className)}>
-      
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4 px-1 shrink-0 pt-4 border-t border-zinc-800">
+    // ✅ 3. 手機版滾動修復：最外層加入 min-h-0，這對 Flex 巢狀滾動至關重要
+    <div className={cn("flex flex-col h-full bg-zinc-950/20 min-h-0", className)}>
+      <div className="flex items-center justify-between p-4 shrink-0 border-b border-zinc-800 bg-zinc-950/50 backdrop-blur-sm z-10">
         <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">留言反饋</h3>
         <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full">
           {isLoading ? "-" : totalCount}
         </span>
       </div>
-      
-      {/* 輸入框 */}
-      <div className="mb-4 shrink-0">
+
+      {/* ✅ 3. 手機版滾動修復：加入 touch-auto 與 overscroll-y-contain */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-zinc-800 overscroll-y-contain touch-auto">
+        {isLoading ? (
+          <CommentsSkeleton />
+        ) : (
+          // ✅ 加入 pb-24 避免最後一則留言被 fixed input 擋住
+          <div className="space-y-1 pb-24">
+            {threadedComments.length === 0 ? (
+              <div className="py-20 flex flex-col items-center justify-center text-zinc-700 space-y-2 opacity-50">
+                <p className="text-xs italic tracking-widest uppercase">No Feedback Yet</p>
+              </div>
+            ) : (
+              threadedComments.map((root, index) => {
+                const isLast = index === threadedComments.length - 1;
+                // 使用 activeThreadId 判斷展開
+                const isExpanded = activeThreadId === root.id;
+                return (
+                  <div key={root.id} ref={isLast ? lastElementRef : null} className="space-y-1">
+                    {renderCommentItem(root)}
+                    
+                    {isExpanded && root.replies.length > 0 && (
+                      <div className="relative mt-1 mb-4 animate-in slide-in-from-top-2 duration-200">
+                        <div className="absolute left-[26px] top-0 bottom-4 w-[2px] bg-zinc-800/40 rounded-full" />
+                        {root.replies.map(reply => renderCommentItem(reply, root.id))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+            {isLoadingMore && (
+              <div className="py-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-zinc-600" /></div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 bg-zinc-950 border-t border-zinc-800 p-4 sticky bottom-0 z-20 shadow-[0_-12px_24px_rgba(0,0,0,0.5)]">
+        {replyTarget && (
+          <div className="bg-blue-600/10 border-l-2 border-blue-600 pl-3 pr-2 py-2 mb-3 rounded-r animate-in slide-in-from-bottom-2 duration-300 flex items-center gap-3">
+             <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden text-sm">
+                <span className="text-blue-400 font-bold shrink-0">回覆 {replyTarget.name}</span>
+                <span className="text-zinc-500 font-mono text-xs shrink-0">[{formatTime(replyTarget.timestamp)}]</span>
+                <span className="text-zinc-400 truncate opacity-90 block flex-1">
+                  ：{replyTarget.content}
+                </span>
+             </div>
+             <button 
+               onClick={() => { setReplyTarget(null); /* 可選：若想取消回覆時也收起串，可加 setActiveThreadId(null) */ }} 
+               className="text-zinc-500 hover:text-white transition-colors shrink-0 p-1"
+             >
+               <X size={16} />
+             </button>
+          </div>
+        )}
+
         <CommentInput 
           projectId={projectId} 
           assetId={assetId} 
           currentTime={currentTime}
-          onCommentSuccess={onRefresh} 
+          parentId={replyTarget?.rootId} 
+          onCommentSuccess={() => { 
+             setReplyTarget(null); 
+             // 留言後可以選擇不收起，方便查看新留言，故保留 activeThreadId
+             onRefresh(); 
+          }} 
+          initialValue={replyTarget ? `@${replyTarget.name} ` : ""}
         />
-      </div>
-
-      {/* 列表區 */}
-      <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-zinc-800 min-h-0">
-        {isLoading ? (
-          <CommentsSkeleton />
-        ) : comments.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-zinc-600 space-y-2 opacity-50">
-            <p className="text-xs italic">尚無留言，標記你的第一個想法</p>
-          </div>
-        ) : (
-          <div className="space-y-3 pb-4">
-            {comments.map((c, index) => {
-              const isLast = index === comments.length - 1;
-              return (
-                <div 
-                  key={c.id} 
-                  ref={isLast ? lastElementRef : null}
-                  className={`p-3 rounded-lg border-l-4 transition-all group ${
-                    editingId === c.id 
-                      ? "bg-zinc-800 border-blue-500" 
-                      : "bg-zinc-800/40 border-transparent border-l-blue-500 hover:bg-zinc-800"
-                  }`}
-                >
-                  <div className="flex gap-3 items-start">
-                    {/* ✅ 修正 Avatar 樣式：加入 overflow-hidden 和 rounded-full */}
-                    <Avatar className="w-8 h-8 border border-zinc-700 shrink-0 mt-0.5 overflow-hidden rounded-full">
-                      <AvatarImage 
-                        src={c.author.avatar_url || undefined} 
-                        className="object-cover w-full h-full" 
-                      />
-                      <AvatarFallback className="bg-zinc-700 text-zinc-400 text-[10px] flex items-center justify-center w-full h-full">
-                        {c.author.display_name?.[0]?.toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-start mb-1">
-                        <div className="flex items-center gap-2">
-                           <span className="font-bold text-xs text-zinc-300">
-                             {c.author.display_name}
-                           </span>
-                           <button 
-                             onClick={() => onSeek(c.timestamp)}
-                             className="text-[10px] font-mono text-blue-400 bg-blue-400/10 px-1.5 py-0.5 rounded hover:bg-blue-400/20 transition-colors"
-                           >
-                             {new Date(c.timestamp * 1000).toISOString().substr(14, 5)}
-                           </button>
-                        </div>
-
-                        {(currentUserId === c.user_id || canEdit) && editingId !== c.id && (
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="sm" className="h-5 w-5 p-0 text-zinc-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity">
-                                <MoreVertical className="w-3.5 h-3.5" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
-                              <DropdownMenuItem 
-                                onClick={() => { setEditingId(c.id); setEditContent(c.content); }}
-                                className="cursor-pointer focus:bg-zinc-800 focus:text-white"
-                              >
-                                <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
-                              </DropdownMenuItem>
-                              <DropdownMenuItem 
-                                onClick={() => handleCommentDelete(c.id)} 
-                                className="cursor-pointer text-red-400 focus:text-red-400 focus:bg-red-900/20"
-                              >
-                                <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                      </div>
-
-                      {editingId === c.id ? (
-                        <div className="animate-in fade-in zoom-in-95 duration-200 mt-2">
-                          <textarea 
-                            value={editContent} 
-                            onChange={(e) => setEditContent(e.target.value)}
-                            className="w-full bg-zinc-950 border border-zinc-700 rounded p-3 text-sm text-white focus:outline-none focus:border-blue-500 min-h-[80px] resize-none"
-                            autoFocus
-                          />
-                          <div className="flex justify-end gap-2 mt-2">
-                            <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-8 text-zinc-400 hover:text-white">
-                              {/* X icon */} 取消
-                            </Button>
-                            <Button size="sm" onClick={() => handleCommentUpdate(c.id)} className="h-8 bg-blue-600 hover:bg-blue-700 text-white">
-                              {/* Check icon */} 儲存
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
-                          {c.content}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            
-            {isLoadingMore && (
-                <div className="py-2 flex justify-center">
-                    <Loader2 className="w-5 h-5 animate-spin text-zinc-500" />
-                </div>
-            )}
-            
-            {!hasMore && comments.length > 0 && (
-                <div className="text-center py-2 text-[10px] text-zinc-600">
-                    已顯示所有留言
-                </div>
-            )}
-          </div>
-        )}
       </div>
     </div>
   );
