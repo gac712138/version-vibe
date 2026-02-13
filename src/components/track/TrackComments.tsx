@@ -45,20 +45,30 @@ interface TrackCommentsProps {
   onSeek: (time: number) => void;
   onRefresh: () => void;
   onLoadMore: () => void;
+  onCommentChange?: (assetId: string, delta: number) => void; 
   hasMore: boolean;
   className?: string; 
 }
 
 export function TrackComments({ 
-  projectId, assetId, currentTime, canEdit, comments: initialComments, totalCount, isLoading, isLoadingMore, currentUserId, onSeek, onRefresh, onLoadMore, hasMore, className 
+  projectId, assetId, currentTime, canEdit, comments: initialComments, totalCount, isLoading, isLoadingMore, currentUserId, onSeek, onRefresh, onLoadMore, onCommentChange, hasMore, className 
 }: TrackCommentsProps) {
   const supabase = createClient();
   
   const [localComments, setLocalComments] = useState<CommentWithUser[]>(initialComments);
   
+  // ✅ 1. 新增 Ref 來追蹤最新的 comments，解決 Realtime 閉包問題
+  const commentsRef = useRef<CommentWithUser[]>(initialComments);
+
   useEffect(() => {
     setLocalComments(initialComments);
+    commentsRef.current = initialComments; // 同步 ref
   }, [initialComments]);
+
+  // 當 localComments 變動時，同步更新 Ref (這樣 Realtime listener 就能讀到最新的值)
+  useEffect(() => {
+    commentsRef.current = localComments;
+  }, [localComments]);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
@@ -75,10 +85,9 @@ export function TrackComments({
     }, 200);
   };
 
-  // 1. 自己新增留言 (Optimistic + Fetch)
   const handleSelfCommentSuccess = async () => {
     setReplyTarget(null);
-    await new Promise(resolve => setTimeout(resolve, 500)); // 緩衝
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     const { data: myNewComment, error } = await supabase
       .from('comments')
@@ -97,83 +106,73 @@ export function TrackComments({
       .single();
 
     if (myNewComment) {
-      setLocalComments(prev => {
-        if (prev.some(c => c.id === myNewComment.id)) return prev;
-        // @ts-ignore
-        return [...prev, myNewComment as CommentWithUser];
-      });
-      scrollToBottom();
+      // ✅ 修正：先檢查，然後在 setLocalComments 外面呼叫 onCommentChange
+      const exists = commentsRef.current.some(c => c.id === myNewComment.id);
+      
+      if (!exists) {
+         onCommentChange?.(assetId, 1);
+         setLocalComments(prev => [...prev, myNewComment as CommentWithUser]);
+         scrollToBottom();
+      }
     }
   };
 
-  // ✅ 2. Realtime 監聽 (分拆策略)
+  // ✅ Realtime 監聽
   useEffect(() => {
     if (!assetId) return;
 
     const channel = supabase
       .channel(`comments:${assetId}`)
       
-      // 👉 監聽 INSERT (只聽目前 Asset)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments', filter: `asset_id=eq.${assetId}` }, async (payload) => {
           const newId = payload.new.id;
           
-          // 檢查本地是否已有 (避免跟自己剛發的重複)
-          setLocalComments(prev => {
-            if (prev.some(c => c.id === newId)) return prev;
+          // ✅ 修正：使用 Ref 檢查是否存在，避免在 setState 內部呼叫 side effect
+          if (commentsRef.current.some(c => c.id === newId)) return;
+          
+          // 確定是新的，通知父層 +1
+          onCommentChange?.(assetId, 1);
+
+          // 補抓 Author 資料
+          const { data: fullComment } = await supabase
+            .from('comments')
+            .select(`*, author:profiles(id, display_name, avatar_url)`)
+            .eq('id', newId)
+            .single();
             
-            // 補抓 Author 資料
-            (async () => {
-               const { data: fullComment } = await supabase
-                .from('comments')
-                .select(`*, author:profiles(id, display_name, avatar_url)`)
-                .eq('id', newId)
-                .single();
-               
-               if (fullComment) {
-                 setLocalComments(current => {
-                   if (current.some(c => c.id === fullComment.id)) return current;
-                   // @ts-ignore
-                   return [...current, fullComment as CommentWithUser];
-                 });
-               }
-            })();
-            return prev;
-          });
+          if (fullComment) {
+            setLocalComments(prev => {
+                // 二次檢查 (防止非同步期間重複)
+                if (prev.some(c => c.id === fullComment.id)) return prev;
+                // @ts-ignore
+                return [...prev, fullComment as CommentWithUser];
+            });
+          }
       })
 
-      // 👉 監聽 UPDATE (只聽目前 Asset)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'comments', filter: `asset_id=eq.${assetId}` }, (payload) => {
           setLocalComments(prev => prev.map(c => 
             c.id === payload.new.id 
-              ? { 
-                  ...c, 
-                  content: payload.new.content, 
-                  updated_at: payload.new.updated_at 
-                  // 保留原本 author, 因為 UPDATE payload 沒有 join 資料
-                } 
+              ? { ...c, content: payload.new.content, updated_at: payload.new.updated_at } 
               : c
           ));
       })
 
-      // 👉 監聽 DELETE (❌ 不加 Filter，監聽全表，然後在前端過濾)
-      // 這是因為 DELETE payload 預設不包含 asset_id，會被 filter 擋掉
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, (payload) => {
           const deletedId = payload.old.id;
-          setLocalComments(prev => {
-            // 如果這個 ID 存在於我們的列表，才執行刪除
-            const exists = prev.some(c => c.id === deletedId);
-            if (exists) {
-              return prev.filter(c => c.id !== deletedId);
-            }
-            return prev;
-          });
+          
+          // ✅ 修正：使用 Ref 檢查
+          if (commentsRef.current.some(c => c.id === deletedId)) {
+             onCommentChange?.(assetId, -1);
+             setLocalComments(prev => prev.filter(c => c.id !== deletedId));
+          }
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [assetId, supabase]);
+  }, [assetId, supabase, onCommentChange]); // commentsRef 不需要放進依賴
 
   // Observer & Thread Logic ...
   const observer = useRef<IntersectionObserver | null>(null);
@@ -224,12 +223,15 @@ export function TrackComments({
     });
   };
 
-  // 3. 刪除操作 (Optimistic Update)
   const handleCommentDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
     
-    // 先更新畫面
-    setLocalComments(prev => prev.filter(c => c.id !== id));
+    // ✅ 修正：先檢查是否存在，然後更新
+    const exists = localComments.some(c => c.id === id);
+    if (exists) {
+        onCommentChange?.(assetId, -1);
+        setLocalComments(prev => prev.filter(c => c.id !== id));
+    }
     
     try {
       await deleteComment(id);
@@ -239,11 +241,9 @@ export function TrackComments({
     }
   };
 
-  // 4. 編輯操作 (Optimistic Update)
   const handleCommentUpdate = async (id: string, content: string) => {
     if (!content.trim()) return;
 
-    // 先更新畫面
     setLocalComments(prev => prev.map(c => 
       c.id === id ? { ...c, content: content } : c
     ));

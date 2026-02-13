@@ -52,11 +52,17 @@ interface TrackPlayerProps {
   canEdit: boolean;
 }
 
-export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) {
+export function TrackPlayer({ projectId, versions: initialVersions, canEdit }: TrackPlayerProps) {
   const supabase = createClient();
   const audioRefs = useRef<Record<string, HTMLAudioElement>>({});
 
-  const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
+  const [versions, setVersions] = useState<Version[]>(initialVersions);
+
+  useEffect(() => {
+    setVersions(initialVersions);
+  }, [initialVersions]);
+
+  const [currentVersion, setCurrentVersion] = useState<Version | null>(initialVersions[0] || null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -78,8 +84,72 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeletingAsset, setIsDeletingAsset] = useState(false);
   
-  // 預設展開
   const [isVersionsExpanded, setIsVersionsExpanded] = useState(true);
+
+  // 子層回調：處理「當前」Asset 的數字變更
+  const handleCommentCountChange = useCallback((assetId: string, delta: number) => {
+    setVersions((prev) => 
+      prev.map((v) => {
+        if (v.id === assetId) {
+          const currentCount = v.comment_count?.[0]?.count || 0;
+          return { ...v, comment_count: [{ count: Math.max(0, currentCount + delta) }] };
+        }
+        return v;
+      })
+    );
+  }, []);
+
+  // ✅ 父層 Realtime：處理「非當前 (Background)」Asset 的數字更新
+  useEffect(() => {
+    // 建立一個全域監聽器
+    const channel = supabase.channel('global-track-player-counter')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'comments' },
+        (payload) => {
+          
+          // 1. 處理新增 (INSERT)
+          if (payload.eventType === 'INSERT') {
+            const targetAssetId = payload.new.asset_id;
+            
+            // ⚠️ 關鍵：如果是當前正在看的版本，忽略之 (因為子組件 TrackComments 已經會處理了)
+            // 避免重複 +1
+            if (targetAssetId === currentVersion?.id) return;
+
+            // 更新背景版本的數字
+            setVersions(prev => prev.map(v => {
+              if (v.id === targetAssetId) {
+                const currentCount = v.comment_count?.[0]?.count || 0;
+                return { ...v, comment_count: [{ count: currentCount + 1 }] };
+              }
+              return v;
+            }));
+          }
+
+          // 2. 處理刪除 (DELETE)
+          // 注意：Supabase 預設 DELETE payload 只會回傳 id，不會回傳 asset_id。
+          // 若要讓這裡生效，您需要在資料庫執行: ALTER TABLE comments REPLICA IDENTITY FULL;
+          // 如果沒執行這行 SQL，payload.old.asset_id 會是 undefined，這段就不會跑。
+          if (payload.eventType === 'DELETE' && payload.old.asset_id) {
+             const targetAssetId = payload.old.asset_id;
+             if (targetAssetId === currentVersion?.id) return;
+
+             setVersions(prev => prev.map(v => {
+              if (v.id === targetAssetId) {
+                const currentCount = v.comment_count?.[0]?.count || 0;
+                return { ...v, comment_count: [{ count: Math.max(0, currentCount - 1) }] };
+              }
+              return v;
+            }));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentVersion?.id, supabase]); 
 
   // 初始化音量
   useEffect(() => {
@@ -196,6 +266,8 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     try {
       await updateAssetName(projectId, currentVersion.id, newName);
       toast.success("版本名稱已更新");
+      setVersions(prev => prev.map(v => v.id === currentVersion.id ? { ...v, name: newName } : v));
+      setCurrentVersion(prev => prev ? { ...prev, name: newName } : null);
       setIsRenameDialogOpen(false);
     } catch (error) { toast.error("更新失敗"); }
   };
@@ -207,13 +279,14 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       await deleteAsset(projectId, currentVersion.id);
       toast.success("版本已刪除");
       setIsDeleteDialogOpen(false);
+      setVersions(prev => prev.filter(v => v.id !== currentVersion.id));
+      setCurrentVersion(null); 
     } catch (error) { toast.error("刪除失敗"); } finally { setIsDeletingAsset(false); }
   };
 
   return (
     <div className="flex flex-col h-full bg-zinc-950 text-white">
       
-      {/* 隱藏的 Audio 元素 */}
       {versions.map((v) => (
         <audio
           key={v.id}
@@ -271,16 +344,12 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         />
       </div>
 
-      {/* --- Section 2: Asset List (可收合 + 局部捲動) --- */}
+      {/* --- Section 2: Asset List --- */}
       <div className="shrink-0 bg-zinc-950 border-b border-zinc-800 relative z-10">
-        
-        {/* 列表內容容器 (動畫區) */}
-        {/* ✅ 修改：使用 max-h-[500px] 配合 duration-500 達成 0.5秒慢動作 */}
         <div className={cn(
-          "transition-all duration-500 ease-in-out overflow-hidden",
+          "transition-all duration-1000 ease-in-out overflow-hidden",
           isVersionsExpanded ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0"
         )}>
-          {/* 內部捲動區：max-h 控制在 30vh 或固定高度，超過則內部捲動 */}
           <div className="max-h-[30vh] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 p-4 pt-4 pb-6">
              <VersionList 
                 versions={versions} 
@@ -292,9 +361,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
           </div>
         </div>
 
-        {/* ✅ 修改：收合按鈕 - 精準壓在分隔線上 */}
-        {/* bottom-0: 貼底 */}
-        {/* translate-y-1/2: 向下推移 50% 自身高度，達成中心壓線效果 */}
         <div className="absolute left-1/2 -translate-x-1/2 bottom-0 translate-y-1/2 z-20">
           <button 
             onClick={() => setIsVersionsExpanded(!isVersionsExpanded)} 
@@ -303,11 +369,9 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
             {isVersionsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
           </button>
         </div>
-
       </div>
 
-      {/* --- Section 3: Comments (填滿剩餘 + 獨立捲動) --- */}
-      {/* z-0: 確保被上面的 z-20 按鈕蓋過 */}
+      {/* --- Section 3: Comments --- */}
       <div className="flex-1 min-h-0 flex flex-col bg-zinc-900/20 relative z-0">
         <TrackComments  
             projectId={projectId} 
@@ -323,11 +387,12 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
             onSeek={handleSeek} 
             onRefresh={fetchInitialComments} 
             onLoadMore={handleLoadMore} 
+            onCommentChange={handleCommentCountChange} 
             className="flex-1 flex flex-col min-h-0" 
         />
       </div>
 
-      {/* Dialogs */}
+      {/* Dialogs ... */}
       <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white">
           <DialogHeader><DialogTitle>重新命名版本</DialogTitle></DialogHeader>
