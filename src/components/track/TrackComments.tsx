@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo } from "react"; 
+import { useState, useRef, useCallback, useMemo, useEffect } from "react"; 
 import { type CommentWithUser, deleteComment, updateComment } from "@/app/actions/comments";
 import { CommentInput } from "@/app/project/[id]/CommentInput";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { MoreHorizontal, Pencil, Trash2, Loader2, MessageSquare, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils"; 
+import { createClient } from "@/utils/supabase/client"; 
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,37 +32,6 @@ function getRelativeTime(dateString: string) {
   return past.toLocaleDateString();
 }
 
-function ParsedCommentContent({ content }: { content: string }) {
-  const parts = content.split(/(@\S+)/g);
-  return (
-    <span className="text-sm text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
-      {parts.map((part, i) => 
-        part.startsWith("@") ? (
-          <span key={i} className="text-blue-400 font-bold">{part}</span>
-        ) : (
-          part
-        )
-      )}
-    </span>
-  );
-}
-
-function CommentsSkeleton() {
-  return (
-    <div className="space-y-4 animate-pulse px-1">
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="flex gap-4 p-4 rounded-xl bg-zinc-900/50">
-          <div className="w-10 h-10 bg-zinc-800 rounded-full shrink-0" />
-          <div className="flex-1 space-y-3 py-1">
-            <div className="h-3 bg-zinc-800 rounded w-1/4" />
-            <div className="h-4 bg-zinc-800 rounded w-3/4" />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 interface TrackCommentsProps {
   projectId: string;
   assetId: string;
@@ -80,15 +50,132 @@ interface TrackCommentsProps {
 }
 
 export function TrackComments({ 
-  projectId, assetId, currentTime, canEdit, comments, totalCount, isLoading, isLoadingMore, currentUserId, onSeek, onRefresh, onLoadMore, hasMore, className 
+  projectId, assetId, currentTime, canEdit, comments: initialComments, totalCount, isLoading, isLoadingMore, currentUserId, onSeek, onRefresh, onLoadMore, hasMore, className 
 }: TrackCommentsProps) {
+  const supabase = createClient();
+  
+  const [localComments, setLocalComments] = useState<CommentWithUser[]>(initialComments);
+  
+  useEffect(() => {
+    setLocalComments(initialComments);
+  }, [initialComments]);
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
   const [replyTarget, setReplyTarget] = useState<{ 
     id: string; name: string; rootId: string; content: string; timestamp: number; 
   } | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  
+  const bottomRef = useRef<HTMLDivElement>(null);
 
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, 200);
+  };
+
+  // 1. 自己新增留言 (Optimistic + Fetch)
+  const handleSelfCommentSuccess = async () => {
+    setReplyTarget(null);
+    await new Promise(resolve => setTimeout(resolve, 500)); // 緩衝
+
+    const { data: myNewComment, error } = await supabase
+      .from('comments')
+      .select(`
+        *,
+        author:profiles (
+          id,
+          display_name,
+          avatar_url
+        )
+      `)
+      .eq('asset_id', assetId)
+      .eq('user_id', currentUserId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (myNewComment) {
+      setLocalComments(prev => {
+        if (prev.some(c => c.id === myNewComment.id)) return prev;
+        // @ts-ignore
+        return [...prev, myNewComment as CommentWithUser];
+      });
+      scrollToBottom();
+    }
+  };
+
+  // ✅ 2. Realtime 監聽 (分拆策略)
+  useEffect(() => {
+    if (!assetId) return;
+
+    const channel = supabase
+      .channel(`comments:${assetId}`)
+      
+      // 👉 監聽 INSERT (只聽目前 Asset)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments', filter: `asset_id=eq.${assetId}` }, async (payload) => {
+          const newId = payload.new.id;
+          
+          // 檢查本地是否已有 (避免跟自己剛發的重複)
+          setLocalComments(prev => {
+            if (prev.some(c => c.id === newId)) return prev;
+            
+            // 補抓 Author 資料
+            (async () => {
+               const { data: fullComment } = await supabase
+                .from('comments')
+                .select(`*, author:profiles(id, display_name, avatar_url)`)
+                .eq('id', newId)
+                .single();
+               
+               if (fullComment) {
+                 setLocalComments(current => {
+                   if (current.some(c => c.id === fullComment.id)) return current;
+                   // @ts-ignore
+                   return [...current, fullComment as CommentWithUser];
+                 });
+               }
+            })();
+            return prev;
+          });
+      })
+
+      // 👉 監聽 UPDATE (只聽目前 Asset)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'comments', filter: `asset_id=eq.${assetId}` }, (payload) => {
+          setLocalComments(prev => prev.map(c => 
+            c.id === payload.new.id 
+              ? { 
+                  ...c, 
+                  content: payload.new.content, 
+                  updated_at: payload.new.updated_at 
+                  // 保留原本 author, 因為 UPDATE payload 沒有 join 資料
+                } 
+              : c
+          ));
+      })
+
+      // 👉 監聽 DELETE (❌ 不加 Filter，監聽全表，然後在前端過濾)
+      // 這是因為 DELETE payload 預設不包含 asset_id，會被 filter 擋掉
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, (payload) => {
+          const deletedId = payload.old.id;
+          setLocalComments(prev => {
+            // 如果這個 ID 存在於我們的列表，才執行刪除
+            const exists = prev.some(c => c.id === deletedId);
+            if (exists) {
+              return prev.filter(c => c.id !== deletedId);
+            }
+            return prev;
+          });
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [assetId, supabase]);
+
+  // Observer & Thread Logic ...
   const observer = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useCallback((node: HTMLDivElement) => {
     if (isLoading || isLoadingMore) return;
@@ -100,15 +187,15 @@ export function TrackComments({
   }, [isLoading, isLoadingMore, hasMore, onLoadMore]);
 
   const threadedComments = useMemo(() => {
-    const roots = comments.filter(c => !c.parent_id);
-    const replies = comments.filter(c => c.parent_id);
+    const roots = localComments.filter(c => !c.parent_id);
+    const replies = localComments.filter(c => c.parent_id);
     return roots.map(root => ({
       ...root,
       replyCount: replies.filter(r => r.parent_id === root.id).length,
       replies: replies.filter(r => r.parent_id === root.id)
         .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
     }));
-  }, [comments]);
+  }, [localComments]);
 
   const handleParentIconClick = (comment: CommentWithUser) => {
     if (activeThreadId === comment.id) {
@@ -137,16 +224,55 @@ export function TrackComments({
     });
   };
 
+  // 3. 刪除操作 (Optimistic Update)
   const handleCommentDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
+    
+    // 先更新畫面
+    setLocalComments(prev => prev.filter(c => c.id !== id));
+    
     try {
       await deleteComment(id);
       toast.success("留言已刪除");
-      onRefresh();
-    } catch (error) { toast.error("刪除失敗"); }
+    } catch (error) { 
+      toast.error("刪除失敗");
+    }
+  };
+
+  // 4. 編輯操作 (Optimistic Update)
+  const handleCommentUpdate = async (id: string, content: string) => {
+    if (!content.trim()) return;
+
+    // 先更新畫面
+    setLocalComments(prev => prev.map(c => 
+      c.id === id ? { ...c, content: content } : c
+    ));
+    setEditingId(null);
+
+    try {
+      await updateComment(id, content);
+      toast.success("留言已更新");
+    } catch (error) {
+      toast.error("更新失敗");
+    }
   };
 
   const formatTime = (sec: number) => new Date(sec * 1000).toISOString().substr(14, 5);
+
+  const ParsedCommentContent = ({ content }: { content: string }) => {
+    const parts = content.split(/(@\S+)/g);
+    return (
+      <span className="text-sm text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
+        {parts.map((part, i) => 
+          part.startsWith("@") ? (
+            <span key={i} className="text-blue-400 font-bold">{part}</span>
+          ) : (
+            part
+          )
+        )}
+      </span>
+    );
+  };
 
   const renderCommentItem = (c: CommentWithUser, rootId?: string) => {
     const isReply = !!rootId;
@@ -200,7 +326,7 @@ export function TrackComments({
               />
               <div className="flex justify-end gap-2 mt-2">
                 <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-6 text-xs text-zinc-500">取消</Button>
-                <Button size="sm" onClick={() => updateComment(c.id, editContent).then(onRefresh).then(() => setEditingId(null))} className="h-6 text-xs bg-blue-600 text-white">儲存</Button>
+                <Button size="sm" onClick={() => handleCommentUpdate(c.id, editContent)} className="h-6 text-xs bg-blue-600 text-white">儲存</Button>
               </div>
             </div>
           ) : (
@@ -237,17 +363,17 @@ export function TrackComments({
   };
 
   return (
-    // ✅ 關鍵：min-h-0 確保 Flexbox 高度能正確收縮
     <div className={cn("flex flex-col h-full bg-zinc-950/20 min-h-0", className)}>
       <div className="flex items-center justify-between p-4 shrink-0 border-b border-zinc-800 bg-zinc-950/50 backdrop-blur-sm z-10">
         <h3 className="text-sm font-bold text-zinc-400 uppercase tracking-widest">留言反饋</h3>
-        <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full">{isLoading ? "-" : totalCount}</span>
+        <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded-full">{isLoading ? "-" : localComments.length}</span>
       </div>
 
-      {/* ✅ 移除 touch-auto 與 overscroll-contain，改用標準 overflow-y-auto */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-zinc-800">
         {isLoading ? (
-          <CommentsSkeleton />
+          <div className="space-y-4 animate-pulse px-1">
+             {[1, 2, 3].map((i) => <div key={i} className="h-20 bg-zinc-900/50 rounded-xl" />)}
+          </div>
         ) : (
           <div className="space-y-1 pb-24">
             {threadedComments.length === 0 ? (
@@ -270,6 +396,8 @@ export function TrackComments({
               })
             )}
             {isLoadingMore && <div className="py-4 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-zinc-600" /></div>}
+            
+            <div ref={bottomRef} />
           </div>
         )}
       </div>
@@ -285,10 +413,13 @@ export function TrackComments({
              <button onClick={() => setReplyTarget(null)} className="text-zinc-500 hover:text-white transition-colors shrink-0 p-1"><X size={16} /></button>
           </div>
         )}
+        
         <CommentInput 
-          projectId={projectId} assetId={assetId} currentTime={currentTime} 
+          projectId={projectId} 
+          assetId={assetId} 
+          currentTime={currentTime} 
           parentId={replyTarget?.rootId} 
-          onCommentSuccess={() => { setReplyTarget(null); onRefresh(); }} 
+          onCommentSuccess={handleSelfCommentSuccess} 
           initialValue={replyTarget ? `@${replyTarget.name} ` : ""}
         />
       </div>
