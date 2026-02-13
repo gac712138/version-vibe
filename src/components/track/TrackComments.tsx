@@ -377,7 +377,7 @@ export function TrackComments({
         ) : (
           <div className="space-y-1 pb-24">
             {threadedComments.length === 0 ? (
-              <div className="py-20 flex flex-col items-center justify-center text-zinc-700 space-y-2 opacity-50"><p className="text-xs italic tracking-widest uppercase">No Feedback Yet</p></div>
+              <div className="py-20 flex flex-col items-center justify-center text-zinc-1400 space-y-2 opacity-50"><p className="text-sm  tracking-widest uppercase">目前沒有留言</p></div>
             ) : (
               threadedComments.map((root, index) => {
                 const isLast = index === threadedComments.length - 1;
