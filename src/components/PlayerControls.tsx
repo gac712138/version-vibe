@@ -57,7 +57,6 @@ export function PlayerControls({
   };
 
   const handleVolumeCommit = () => {
-    // 拖曳結束，殘留 1 秒再消失
     timerRef.current = setTimeout(() => {
       setShowPercent(false);
     }, 1000);
@@ -99,8 +98,8 @@ export function PlayerControls({
             </div>
           </div>
 
-          {/* 音量控制項：手機滿版，電腦固定寬度 */}
-          <div className="flex items-center gap-3 bg-zinc-900/80 px-4 py-2.5 md:py-2 rounded-xl border border-zinc-800 shadow-inner group/volume relative">
+          {/* ✅ 修改：音量控制區塊整個隱藏 (hidden md:flex) */}
+          <div className="hidden md:flex items-center gap-3 bg-zinc-900/80 px-4 py-2 rounded-xl border border-zinc-800 shadow-inner group/volume relative">
             <button 
               onClick={(e) => { e.stopPropagation(); onMuteToggle(); }}
               className="text-zinc-400 hover:text-blue-400 transition-colors shrink-0"
@@ -108,8 +107,7 @@ export function PlayerControls({
               {isMuted || volume === 0 ? <VolumeX size={18} /> : <Volume2 size={18} />}
             </button>
             
-            <div className="flex-1 md:w-28 relative">
-               {/* 拖曳顯示百分比 */}
+            <div className="w-24 lg:w-28 relative">
                <div className={cn(
                  "absolute -top-10 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded transition-all duration-300 pointer-events-none",
                  showPercent ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
@@ -135,7 +133,7 @@ export function PlayerControls({
         </div>
 
         {/* Waveform Area (手機高度縮小) */}
-        <div className="relative h-16 md:h-24 bg-zinc-950 rounded-lg border border-zinc-800/50 group mt-4">
+        <div className="relative h-16 md:h-24 bg-zinc-950 rounded-lg border border-zinc-800/50 group mt-4 select-none">
           <div className="absolute inset-0 flex items-center justify-center opacity-20 group-hover:opacity-30 transition-opacity pointer-events-none px-2">
             <div className="flex items-end gap-[1px] md:gap-[2px] h-1/2 w-full">
               {Array.from({ length: 60 }).map((_, i) => (
@@ -157,7 +155,7 @@ export function PlayerControls({
                   <div key={comment.id} className="absolute top-0 bottom-0 w-[1px] md:w-[2px] bg-blue-500/20" style={{ left: `${position}%` }}>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <button onClick={(e) => { e.stopPropagation(); onSeek(comment.timestamp); }} className="absolute top-1 md:top-2 -translate-x-1/2 p-0.5 md:p-1 bg-blue-600 text-white rounded-full pointer-events-auto">
+                        <button onClick={(e) => { e.stopPropagation(); onSeek(comment.timestamp); }} className="absolute top-1 md:top-2 -translate-x-1/2 p-0.5 md:p-1 bg-blue-600 text-white rounded-full pointer-events-auto hover:scale-125 transition-transform">
                           <MessageCircle className="w-2.5 h-2.5 md:w-3 md:h-3" />
                         </button>
                       </TooltipTrigger>

@@ -77,6 +77,8 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [newName, setNewName] = useState("");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeletingAsset, setIsDeletingAsset] = useState(false);
+  
+  // 預設展開
   const [isVersionsExpanded, setIsVersionsExpanded] = useState(true);
 
   // 初始化音量
@@ -195,8 +197,6 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       await updateAssetName(projectId, currentVersion.id, newName);
       toast.success("版本名稱已更新");
       setIsRenameDialogOpen(false);
-      // 因為是在 client component，這裡不一定能 router.refresh() 看到效果
-      // 建議：實際專案中可以透過 callback 通知父層更新，或這裡重新 fetch
     } catch (error) { toast.error("更新失敗"); }
   };
 
@@ -207,14 +207,10 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       await deleteAsset(projectId, currentVersion.id);
       toast.success("版本已刪除");
       setIsDeleteDialogOpen(false);
-      // 簡單的 UX 處理：
-      // 實際專案中，這裡應該通知父層 (page.tsx) 重新抓取資料
-      // 或直接在這裡 reload window.location.reload()
     } catch (error) { toast.error("刪除失敗"); } finally { setIsDeletingAsset(false); }
   };
 
   return (
-    // ✅ TrackPlayer 本身填滿父層給的剩餘空間
     <div className="flex flex-col h-full bg-zinc-950 text-white">
       
       {/* 隱藏的 Audio 元素 */}
@@ -237,7 +233,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         />
       ))}
 
-      {/* --- Section 1: Player Controls (包含 Asset 編輯選單) --- */}
+      {/* --- Section 1: Player Controls --- */}
       <div className="shrink-0 p-4 md:p-6 bg-zinc-950 border-b border-zinc-800/50 relative z-10">
         {canEdit && (
             <div className="absolute top-2 right-2 md:top-4 md:right-4 z-20">
@@ -276,22 +272,16 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       </div>
 
       {/* --- Section 2: Asset List (可收合 + 局部捲動) --- */}
-      <div className="shrink-0 bg-zinc-950 border-b border-zinc-800 relative transition-all duration-300 z-10">
-        <div className="absolute left-1/2 -translate-x-1/2 -top-3 z-10">
-          <button 
-            onClick={() => setIsVersionsExpanded(!isVersionsExpanded)} 
-            className="bg-zinc-950 border border-zinc-800 rounded-full w-12 h-5 flex items-center justify-center text-zinc-500 hover:text-white shadow-sm"
-          >
-            {isVersionsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-          </button>
-        </div>
-
+      <div className="shrink-0 bg-zinc-950 border-b border-zinc-800 relative z-10">
+        
+        {/* 列表內容容器 (動畫區) */}
+        {/* ✅ 修改：使用 max-h-[500px] 配合 duration-500 達成 0.5秒慢動作 */}
         <div className={cn(
-          "transition-all duration-300 ease-in-out overflow-hidden",
-          isVersionsExpanded ? "opacity-100" : "max-h-0 opacity-0"
+          "transition-all duration-500 ease-in-out overflow-hidden",
+          isVersionsExpanded ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0"
         )}>
-          {/* ✅ max-h-[240px] 約為 4 個項目的高度，超過此高度出現 Scrollbar */}
-          <div className="max-h-[240px] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 p-4 pt-4">
+          {/* 內部捲動區：max-h 控制在 30vh 或固定高度，超過則內部捲動 */}
+          <div className="max-h-[30vh] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 p-4 pt-4 pb-6">
              <VersionList 
                 versions={versions} 
                 currentVersionId={currentVersion?.id || null} 
@@ -301,10 +291,23 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
              />
           </div>
         </div>
+
+        {/* ✅ 修改：收合按鈕 - 精準壓在分隔線上 */}
+        {/* bottom-0: 貼底 */}
+        {/* translate-y-1/2: 向下推移 50% 自身高度，達成中心壓線效果 */}
+        <div className="absolute left-1/2 -translate-x-1/2 bottom-0 translate-y-1/2 z-20">
+          <button 
+            onClick={() => setIsVersionsExpanded(!isVersionsExpanded)} 
+            className="bg-zinc-950 border border-zinc-800 rounded-full w-12 h-5 flex items-center justify-center text-zinc-500 hover:text-white shadow-sm transition-colors cursor-pointer"
+          >
+            {isVersionsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+        </div>
+
       </div>
 
       {/* --- Section 3: Comments (填滿剩餘 + 獨立捲動) --- */}
-      {/* ✅ flex-1 確保佔滿剩餘高度，min-h-0 允許 Flexbox 收縮，flex-col 傳遞給子層 */}
+      {/* z-0: 確保被上面的 z-20 按鈕蓋過 */}
       <div className="flex-1 min-h-0 flex flex-col bg-zinc-900/20 relative z-0">
         <TrackComments  
             projectId={projectId} 
