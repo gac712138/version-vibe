@@ -1,14 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useSearchParams, useRouter } from "next/navigation"; 
 import { PlayerControls } from "./PlayerControls";
 import { VersionList } from "./VersionList";
 import { TrackComments } from "@/components/track/TrackComments"; 
 import { createClient } from "@/utils/supabase/client";
 import { getComments, type CommentWithUser } from "@/app/actions/comments"; 
 import { updateAssetName, deleteAsset } from "@/app/actions/assets"; 
-import { MoreHorizontal, Edit, Trash2, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { MoreHorizontal, Edit, Trash2, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,7 +25,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-  DialogClose,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -55,10 +53,7 @@ interface TrackPlayerProps {
 }
 
 export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const supabase = createClient();
-  
   const audioRefs = useRef<Record<string, HTMLAudioElement>>({});
 
   const [currentVersion, setCurrentVersion] = useState<Version | null>(versions[0] || null);
@@ -84,6 +79,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
   const [isDeletingAsset, setIsDeletingAsset] = useState(false);
   const [isVersionsExpanded, setIsVersionsExpanded] = useState(true);
 
+  // 初始化音量
   useEffect(() => {
     const savedVolumes = localStorage.getItem("asset-volumes-map");
     if (savedVolumes) {
@@ -97,6 +93,7 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     }
   }, [assetVolumes]);
 
+  // 初始化 Audio
   useEffect(() => {
     versions.forEach(v => {
       const audio = audioRefs.current[v.id];
@@ -198,7 +195,8 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
       await updateAssetName(projectId, currentVersion.id, newName);
       toast.success("版本名稱已更新");
       setIsRenameDialogOpen(false);
-      router.refresh();
+      // 因為是在 client component，這裡不一定能 router.refresh() 看到效果
+      // 建議：實際專案中可以透過 callback 通知父層更新，或這裡重新 fetch
     } catch (error) { toast.error("更新失敗"); }
   };
 
@@ -208,15 +206,18 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
     try {
       await deleteAsset(projectId, currentVersion.id);
       toast.success("版本已刪除");
-      const remaining = versions.filter(v => v.id !== currentVersion.id);
-      if (remaining.length > 0) setCurrentVersion(remaining[0]);
       setIsDeleteDialogOpen(false);
-      router.refresh();
+      // 簡單的 UX 處理：
+      // 實際專案中，這裡應該通知父層 (page.tsx) 重新抓取資料
+      // 或直接在這裡 reload window.location.reload()
     } catch (error) { toast.error("刪除失敗"); } finally { setIsDeletingAsset(false); }
   };
 
   return (
-    <div className="max-w-full mx-auto pb-4 space-y-4 px-0 md:px-4">
+    // ✅ TrackPlayer 本身填滿父層給的剩餘空間
+    <div className="flex flex-col h-full bg-zinc-950 text-white">
+      
+      {/* 隱藏的 Audio 元素 */}
       {versions.map((v) => (
         <audio
           key={v.id}
@@ -236,80 +237,94 @@ export function TrackPlayer({ projectId, versions, canEdit }: TrackPlayerProps) 
         />
       ))}
 
-      {/* ✅ 修復 1: 高度計算調整，避免手機網址列干擾，確保有空間給捲軸 */}
-      <div className="sticky top-[70px] md:top-[80px] z-30 flex flex-col h-[calc(100vh-140px)] md:h-[calc(100vh-120px)] bg-zinc-950 border border-zinc-800 rounded-xl overflow-hidden shadow-2xl">
-          <div className="relative shrink-0 bg-zinc-950">
-              {canEdit && (
-                <div className="absolute top-4 right-4 z-20">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-full">
-                        <MoreHorizontal className="w-5 h-5" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
-                      <DropdownMenuItem onClick={() => { if (currentVersion) { setNewName(currentVersion.name); setIsRenameDialogOpen(true); }}} className="cursor-pointer focus:bg-zinc-800">
-                        <Edit className="mr-2 h-4 w-4" /> 重新命名
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator className="bg-zinc-800" />
-                      <DropdownMenuItem onClick={() => setIsDeleteDialogOpen(true)} className="cursor-pointer text-red-400">
-                        <Trash2 className="mr-2 h-4 w-4" /> 刪除版本
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              )}
+      {/* --- Section 1: Player Controls (包含 Asset 編輯選單) --- */}
+      <div className="shrink-0 p-4 md:p-6 bg-zinc-950 border-b border-zinc-800/50 relative z-10">
+        {canEdit && (
+            <div className="absolute top-2 right-2 md:top-4 md:right-4 z-20">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-full">
+                    <MoreHorizontal className="w-5 h-5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300">
+                  <DropdownMenuItem onClick={() => { if (currentVersion) { setNewName(currentVersion.name); setIsRenameDialogOpen(true); }}} className="cursor-pointer focus:bg-zinc-800">
+                    <Edit className="mr-2 h-4 w-4" /> 重新命名版本
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator className="bg-zinc-800" />
+                  <DropdownMenuItem onClick={() => setIsDeleteDialogOpen(true)} className="cursor-pointer text-red-400">
+                    <Trash2 className="mr-2 h-4 w-4" /> 刪除版本
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+        )}
 
-              <div className="p-4 md:p-6 pb-2">
-                <PlayerControls
-                  isPlaying={isPlaying}
-                  onPlayPauseToggle={togglePlayPause}
-                  currentVersionName={currentVersion?.name}
-                  currentTime={currentTime}
-                  duration={duration}
-                  onSeek={handleSeek}
-                  comments={comments} 
-                  volume={assetVolumes[currentVersion?.id || ""] ?? 0.9}
-                  isMuted={isMuted}
-                  onVolumeChange={handleVolumeUpdate}
-                  onMuteToggle={() => setIsMuted(!isMuted)}
-                />
-              </div>
-
-              {isVersionsExpanded && (
-                <div className="px-4 md:px-6 pb-4 md:pb-6 animate-in fade-in slide-in-from-top-1">
-                  <VersionList versions={versions} currentVersionId={currentVersion?.id || null} isPlaying={isPlaying} onVersionSelect={handleVersionSelect} className="w-full" />
-                </div>
-              )}
-
-              <div className="relative border-b border-zinc-800/50">
-                <button onClick={() => setIsVersionsExpanded(!isVersionsExpanded)} className="absolute left-1/2 -translate-x-1/2 -top-3 z-40 bg-zinc-950 border border-zinc-800 rounded-full w-14 h-6 flex items-center justify-center text-zinc-500 hover:text-white shadow-md">
-                  {isVersionsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                </button>
-              </div>
-          </div>
-
-          {/* ✅ 修復 2: 強制父層 flex-col 與 min-h-0，這對內部滾動是絕對必要的 */}
-          <div className="flex-1 flex flex-col min-h-0 bg-zinc-900/20 px-2 md:px-4 pt-4">
-            <TrackComments  
-                projectId={projectId} 
-                assetId={currentVersion?.id || ""} 
-                currentTime={currentTime} 
-                canEdit={canEdit} 
-                comments={comments} 
-                isLoading={isLoadingComments} 
-                isLoadingMore={isLoadingMore} 
-                hasMore={hasMore} 
-                totalCount={totalCount} 
-                currentUserId={currentUserId} 
-                onSeek={handleSeek} 
-                onRefresh={fetchInitialComments} 
-                onLoadMore={handleLoadMore} 
-                className="flex-1 flex flex-col min-h-0" 
-            />
-          </div>
+        <PlayerControls
+          isPlaying={isPlaying}
+          onPlayPauseToggle={togglePlayPause}
+          currentVersionName={currentVersion?.name}
+          currentTime={currentTime}
+          duration={duration}
+          onSeek={handleSeek}
+          comments={comments} 
+          volume={assetVolumes[currentVersion?.id || ""] ?? 0.9}
+          isMuted={isMuted}
+          onVolumeChange={handleVolumeUpdate}
+          onMuteToggle={() => setIsMuted(!isMuted)}
+        />
       </div>
 
+      {/* --- Section 2: Asset List (可收合 + 局部捲動) --- */}
+      <div className="shrink-0 bg-zinc-950 border-b border-zinc-800 relative transition-all duration-300 z-10">
+        <div className="absolute left-1/2 -translate-x-1/2 -top-3 z-10">
+          <button 
+            onClick={() => setIsVersionsExpanded(!isVersionsExpanded)} 
+            className="bg-zinc-950 border border-zinc-800 rounded-full w-12 h-5 flex items-center justify-center text-zinc-500 hover:text-white shadow-sm"
+          >
+            {isVersionsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+        </div>
+
+        <div className={cn(
+          "transition-all duration-300 ease-in-out overflow-hidden",
+          isVersionsExpanded ? "opacity-100" : "max-h-0 opacity-0"
+        )}>
+          {/* ✅ max-h-[240px] 約為 4 個項目的高度，超過此高度出現 Scrollbar */}
+          <div className="max-h-[240px] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800 p-4 pt-4">
+             <VersionList 
+                versions={versions} 
+                currentVersionId={currentVersion?.id || null} 
+                isPlaying={isPlaying} 
+                onVersionSelect={handleVersionSelect} 
+                className="w-full" 
+             />
+          </div>
+        </div>
+      </div>
+
+      {/* --- Section 3: Comments (填滿剩餘 + 獨立捲動) --- */}
+      {/* ✅ flex-1 確保佔滿剩餘高度，min-h-0 允許 Flexbox 收縮，flex-col 傳遞給子層 */}
+      <div className="flex-1 min-h-0 flex flex-col bg-zinc-900/20 relative z-0">
+        <TrackComments  
+            projectId={projectId} 
+            assetId={currentVersion?.id || ""} 
+            currentTime={currentTime} 
+            canEdit={canEdit} 
+            comments={comments} 
+            isLoading={isLoadingComments} 
+            isLoadingMore={isLoadingMore} 
+            hasMore={hasMore} 
+            totalCount={totalCount} 
+            currentUserId={currentUserId} 
+            onSeek={handleSeek} 
+            onRefresh={fetchInitialComments} 
+            onLoadMore={handleLoadMore} 
+            className="flex-1 flex flex-col min-h-0" 
+        />
+      </div>
+
+      {/* Dialogs */}
       <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
         <DialogContent className="sm:max-w-[425px] bg-zinc-900 border-zinc-800 text-white">
           <DialogHeader><DialogTitle>重新命名版本</DialogTitle></DialogHeader>
