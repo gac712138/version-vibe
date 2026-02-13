@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useSearchParams } from "next/navigation"; // ✅ 1. 引入 hook
 import { PlayerControls } from "./PlayerControls";
 import { VersionList } from "./VersionList";
 import { TrackComments } from "@/components/track/TrackComments"; 
@@ -54,6 +55,7 @@ interface TrackPlayerProps {
 
 export function TrackPlayer({ projectId, versions: initialVersions, canEdit }: TrackPlayerProps) {
   const supabase = createClient();
+  const searchParams = useSearchParams(); // ✅ 2. 取得 URL 參數
   const audioRefs = useRef<Record<string, HTMLAudioElement>>({});
 
   const [versions, setVersions] = useState<Version[]>(initialVersions);
@@ -66,6 +68,58 @@ export function TrackPlayer({ projectId, versions: initialVersions, canEdit }: T
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+
+  // 用來防止重複跳轉的 Ref (避免背景更新時一直把時間拉回去)
+  const lastSeekKey = useRef<string | null>(null);
+
+  // ------------------------------------------------------------------
+  // ✅ 3. 新增：處理 URL 參數 (?assetId=...&t=...) 自動導航與跳轉
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    const assetIdParam = searchParams.get("assetId");
+    const timeParam = searchParams.get("t");
+    const uniqueKey = `${assetIdParam}-${timeParam}`; // 組合出一個唯一 key
+
+    // 1. 版本切換邏輯
+    // 如果 URL 指定了 assetId，且我們還沒切換過去，就先切換版本
+    if (assetIdParam && currentVersion?.id !== assetIdParam) {
+      const targetVersion = versions.find(v => v.id === assetIdParam);
+      if (targetVersion) {
+        setCurrentVersion(targetVersion);
+        // 切換後會觸發 re-render，下一次進來這個 effect 時 id 就會匹配了
+        return; 
+      }
+    }
+
+    // 2. 時間跳轉邏輯
+    if (timeParam && currentVersion) {
+      // 確保我們已經在正確的版本上才執行跳轉 (如果 assetIdParam 存在的話)
+      if (assetIdParam && currentVersion.id !== assetIdParam) return;
+
+      // 防止重複執行：如果這個 asset+time 已經跳轉過了，就不再執行
+      if (lastSeekKey.current === uniqueKey) return;
+
+      const seekTime = parseFloat(timeParam);
+      if (!isNaN(seekTime)) {
+        console.log(`🚀 [AutoSeek] Jumping to ${seekTime}s on asset ${currentVersion.name}`);
+        
+        setCurrentTime(seekTime);
+        
+        // 操作 Audio DOM
+        setTimeout(() => {
+          const audio = audioRefs.current[currentVersion.id];
+          if (audio) {
+            audio.currentTime = seekTime;
+            // 如果希望點進來自動播放，可以解開下面這行：
+            // audio.play().catch(e => console.log("Auto-play blocked")); setIsPlaying(true);
+          }
+        }, 300); // 稍微延遲確保 DOM 準備好
+
+        // 標記已處理
+        lastSeekKey.current = uniqueKey;
+      }
+    }
+  }, [searchParams, currentVersion, versions]);
 
   const [assetVolumes, setAssetVolumes] = useState<Record<string, number>>({});
   const [isMuted, setIsMuted] = useState(false);
@@ -86,7 +140,6 @@ export function TrackPlayer({ projectId, versions: initialVersions, canEdit }: T
   
   const [isVersionsExpanded, setIsVersionsExpanded] = useState(true);
 
-  // 子層回調：處理「當前」Asset 的數字變更
   const handleCommentCountChange = useCallback((assetId: string, delta: number) => {
     setVersions((prev) => 
       prev.map((v) => {
@@ -99,24 +152,16 @@ export function TrackPlayer({ projectId, versions: initialVersions, canEdit }: T
     );
   }, []);
 
-  // ✅ 父層 Realtime：處理「非當前 (Background)」Asset 的數字更新
   useEffect(() => {
-    // 建立一個全域監聽器
     const channel = supabase.channel('global-track-player-counter')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'comments' },
         (payload) => {
-          
-          // 1. 處理新增 (INSERT)
           if (payload.eventType === 'INSERT') {
             const targetAssetId = payload.new.asset_id;
-            
-            // ⚠️ 關鍵：如果是當前正在看的版本，忽略之 (因為子組件 TrackComments 已經會處理了)
-            // 避免重複 +1
             if (targetAssetId === currentVersion?.id) return;
 
-            // 更新背景版本的數字
             setVersions(prev => prev.map(v => {
               if (v.id === targetAssetId) {
                 const currentCount = v.comment_count?.[0]?.count || 0;
@@ -126,10 +171,6 @@ export function TrackPlayer({ projectId, versions: initialVersions, canEdit }: T
             }));
           }
 
-          // 2. 處理刪除 (DELETE)
-          // 注意：Supabase 預設 DELETE payload 只會回傳 id，不會回傳 asset_id。
-          // 若要讓這裡生效，您需要在資料庫執行: ALTER TABLE comments REPLICA IDENTITY FULL;
-          // 如果沒執行這行 SQL，payload.old.asset_id 會是 undefined，這段就不會跑。
           if (payload.eventType === 'DELETE' && payload.old.asset_id) {
              const targetAssetId = payload.old.asset_id;
              if (targetAssetId === currentVersion?.id) return;

@@ -56,7 +56,7 @@ export function NotificationBell() {
     };
   }, []);
 
-  // 3. 點擊通知的行為 (保留你原本的邏輯)
+  // 3. 點擊通知的行為 (已修正跳轉邏輯)
   const handleItemClick = async (notification: NotificationItem) => {
     // 標記已讀
     if (!notification.is_read) {
@@ -74,9 +74,20 @@ export function NotificationBell() {
     }
 
     const params = new URLSearchParams();
+    
+    // ✅ 修正 1: 參數名稱改為 assetId (對應 TrackPlayer)
     if (notification.asset_id) { 
-      params.set("versionId", notification.asset_id);
+      params.set("assetId", notification.asset_id);
     }
+
+    // ✅ 修正 2: 加入時間參數 t
+    // 這裡假設後端 getNotifications 有 join comments 並回傳 timestamp
+    // @ts-ignore: 忽略型別檢查，確保您後端有 select comment:comments(timestamp)
+    const timestamp = notification.comment?.timestamp;
+    if (timestamp !== undefined && timestamp !== null) {
+      params.set("t", timestamp.toString());
+    }
+
     if (notification.comment_id) {
       params.set("commentId", notification.comment_id);
     }
