@@ -34,25 +34,43 @@ export function NotificationBell() {
   useEffect(() => {
     fetchList();
 
-    // 2. 設定 Realtime 監聽
-    const channel = supabase
-      .channel('notifications-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-        },
-        async () => {
-           await fetchList();
-           toast.info("收到新通知！");
-        }
-      )
-      .subscribe();
+    // 2. 設定 Realtime 監聽 (修正版：使用專屬頻道 + 過濾器)
+    const setupRealtime = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      console.log(`🔌 [Notification] Subscribing for user: ${user.id}`);
+
+      // 使用 user.id 作為頻道名稱，避免多帳號/多視窗衝突
+      const channel = supabase
+        .channel(`notifications:${user.id}`)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'notifications',
+            filter: `receiver_id=eq.${user.id}`, // ✅ 只監聽發給自己的
+          },
+          async (payload) => {
+             console.log("🔔 [Notification] New notification received!", payload);
+             await fetchList();
+             toast.info("收到新通知！");
+          }
+        )
+        .subscribe();
+
+      return () => {
+        console.log(`🔌 [Notification] Unsubscribing...`);
+        supabase.removeChannel(channel);
+      };
+    };
+
+    let cleanup: (() => void) | undefined;
+    setupRealtime().then(c => { cleanup = c; });
 
     return () => {
-      supabase.removeChannel(channel);
+      if (cleanup) cleanup();
     };
   }, []);
 
@@ -69,25 +87,28 @@ export function NotificationBell() {
     // 路由邏輯
     let targetPath = `/project/${notification.project_id}`;
 
+    // 如果是舊版路由結構可能會用到 track_id，這裡保留
     if (notification.track_id) {
       targetPath += `/track/${notification.track_id}`;
     }
 
     const params = new URLSearchParams();
     
-    // ✅ 修正 1: 參數名稱改為 assetId (對應 TrackPlayer)
+    // ✅ 修正 1: 參數名稱改為 assetId (對應 TrackPlayer 的監聽)
     if (notification.asset_id) { 
       params.set("assetId", notification.asset_id);
     }
 
     // ✅ 修正 2: 加入時間參數 t
-    // 這裡假設後端 getNotifications 有 join comments 並回傳 timestamp
     // @ts-ignore: 忽略型別檢查，確保您後端有 select comment:comments(timestamp)
     const timestamp = notification.comment?.timestamp;
+    
+    // 只有當 timestamp 存在且大於 0 時才帶入參數
     if (timestamp !== undefined && timestamp !== null) {
       params.set("t", timestamp.toString());
     }
 
+    // 帶上 commentId 讓前端可以做高亮或其他處理
     if (notification.comment_id) {
       params.set("commentId", notification.comment_id);
     }
