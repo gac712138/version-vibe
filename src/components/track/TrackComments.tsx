@@ -18,7 +18,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-// --- 輔助函式：時間格式化 ---
 function getRelativeTime(dateString: string) {
   if (!dateString) return "剛剛";
   const now = new Date();
@@ -37,7 +36,7 @@ function getRelativeTime(dateString: string) {
 
 const formatTime = (sec: number) => new Date(sec * 1000).toISOString().substr(14, 5);
 
-// --- Custom Hook: 處理 點擊 / 雙擊 / 長按 的邏輯 ---
+// --- Custom Hook: 手勢邏輯 (保留上一版功能) ---
 function useSmartGesture({
   onSingleClick,
   onDoubleClick,
@@ -54,7 +53,6 @@ function useSmartGesture({
   const isLongPressRef = useRef(false);
   const startPosRef = useRef({ x: 0, y: 0 });
 
-  // 開始觸摸/點擊
   const handlePointerDown = (e: React.PointerEvent) => {
     isLongPressRef.current = false;
     startPosRef.current = { x: e.clientX, y: e.clientY };
@@ -62,16 +60,14 @@ function useSmartGesture({
     if (enableLongPress) {
       longPressTimeoutRef.current = setTimeout(() => {
         isLongPressRef.current = true;
-        // 觸發震動回饋 (如果裝置支援)
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
           navigator.vibrate(50);
         }
         onLongPress();
-      }, 500); // 500ms 視為長按
+      }, 500); 
     }
   };
 
-  // 手指移動 (如果移動太多，取消長按)
   const handlePointerMove = (e: React.PointerEvent) => {
     if (longPressTimeoutRef.current) {
       const moveX = Math.abs(e.clientX - startPosRef.current.x);
@@ -83,7 +79,6 @@ function useSmartGesture({
     }
   };
 
-  // 結束觸摸/點擊
   const handlePointerUp = (e: React.PointerEvent) => {
     if (longPressTimeoutRef.current) {
       clearTimeout(longPressTimeoutRef.current);
@@ -91,9 +86,7 @@ function useSmartGesture({
     }
   };
 
-  // 點擊事件 (這是最後觸發的，用來判斷單點或雙點)
   const handleClick = (e: React.MouseEvent) => {
-    // 如果剛剛觸發了長按，則忽略這次的 Click
     if (isLongPressRef.current) {
       e.preventDefault();
       e.stopPropagation();
@@ -102,16 +95,14 @@ function useSmartGesture({
     }
 
     if (clickTimeoutRef.current) {
-      // 偵測到第二次點擊 -> 觸發雙擊
       clearTimeout(clickTimeoutRef.current);
       clickTimeoutRef.current = null;
       onDoubleClick();
     } else {
-      // 第一次點擊 -> 設定計時器等待
       clickTimeoutRef.current = setTimeout(() => {
         onSingleClick();
         clickTimeoutRef.current = null;
-      }, 250); // 250ms 內沒點第二次就視為單點
+      }, 250); 
     }
   };
 
@@ -120,12 +111,9 @@ function useSmartGesture({
     onPointerMove: handlePointerMove,
     onPointerUp: handlePointerUp,
     onClick: handleClick,
-    // 防止長按時選取文字
     style: { userSelect: 'none' as const, WebkitUserSelect: 'none' as const, touchAction: 'manipulation' as const }, 
   };
 }
-
-// --- Main Component ---
 
 interface TrackCommentsProps {
   projectId: string;
@@ -171,13 +159,9 @@ export function TrackComments({
   } | null>(null);
   
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
-  
-  // 用來控制特定留言的選單是否開啟 (取代原本按 ... 的行為)
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // --- Effect: 自動滾動 ---
   useEffect(() => {
     const targetCommentId = searchParams.get("commentId");
     if (!targetCommentId || localComments.length === 0 || hasScrolledToComment.current) return;
@@ -203,7 +187,6 @@ export function TrackComments({
     hasScrolledToComment.current = false;
   }, [assetId]);
 
-  // --- Realtime ---
   useEffect(() => {
     if (!assetId) return;
 
@@ -236,7 +219,6 @@ export function TrackComments({
     return () => { supabase.removeChannel(channel); };
   }, [assetId, supabase, onCommentChange]);
 
-  // --- Observer ---
   const observer = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useCallback((node: HTMLDivElement) => {
     if (isLoading || isLoadingMore) return;
@@ -302,7 +284,6 @@ export function TrackComments({
     );
   };
 
-  // --- Render Item (包含手勢邏輯) ---
   const CommentItem = ({ c, rootId }: { c: CommentWithUser; rootId?: string }) => {
     const isReply = !!rootId;
     const isOwner = currentUserId === c.user_id;
@@ -310,47 +291,32 @@ export function TrackComments({
     const targetId = searchParams.get("commentId");
     const isTarget = targetId === c.id;
 
-    // 手勢行為定義
     const gestureProps = useSmartGesture({
-      // 1. 單點 -> 播放器跳轉
       onSingleClick: () => {
-        // 如果正在編輯，不觸發跳轉
         if (editingId === c.id) return;
-        
         onSeek(c.timestamp);
-        // 如果是子留言，單點也可以視為「展開/聚焦」，如果要更細緻可以加
       },
-      // 2. 雙點 -> 回覆
       onDoubleClick: () => {
         if (editingId === c.id) return;
-        
         if (isReply) {
-          // 子留言雙點：回覆該子留言 (rootId 為父)
           setActiveThreadId(rootId!); 
           setReplyTarget({ id: c.id, name: c.author.display_name, rootId: rootId!, content: c.content, timestamp: c.timestamp });
         } else {
-          // 父留言雙點：回覆父留言
           if (activeThreadId === c.id) {
-             // 已經展開了，只設定 target
              setReplyTarget({ id: c.id, name: c.author.display_name, rootId: c.id, content: c.content, timestamp: c.timestamp });
           } else {
              setActiveThreadId(c.id);
              setReplyTarget({ id: c.id, name: c.author.display_name, rootId: c.id, content: c.content, timestamp: c.timestamp });
           }
         }
-        // 震動一下提示
         if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(30);
       },
-      // 3. 長按 -> 擁有者開啟編輯/刪除，非擁有者可能回覆(選用)
       onLongPress: () => {
         if (isOwner) {
           setMenuOpenId(c.id);
-        } else {
-          // 非擁有者長按，也可以設為開啟回覆
-          // setReplyTarget(...)
         }
       },
-      enableLongPress: isOwner, // 只有擁有者才啟用長按偵測 (或所有人都可以，看需求)
+      enableLongPress: isOwner, 
     });
 
     return (
@@ -368,20 +334,16 @@ export function TrackComments({
           </AvatarFallback>
         </Avatar>
 
-        {/* 將 gestureProps 綁定在這個 div 上 
-            同時加上 cursor-pointer 讓 desktop 使用者知道可點擊
-        */}
         <div 
           {...gestureProps}
           className={cn(
             "flex flex-col p-3 rounded-2xl w-fit min-w-[180px] max-w-[85%] md:max-w-[70%] border shadow-sm relative group transition-all duration-300 cursor-pointer active:scale-[0.98]",
             editingId === c.id 
-              ? "bg-zinc-800/80 border-blue-500/50 cursor-auto" // 編輯時取消 pointer 行為
+              ? "bg-zinc-800/80 border-blue-500/50 cursor-auto"
               : (isActiveThread || isReply) ? "bg-zinc-900/40 border-zinc-800/50 hover:bg-zinc-900/60" : "bg-zinc-900/60 border-zinc-800 hover:bg-zinc-800/80",
             isTarget && "ring-2 ring-blue-500 bg-blue-500/10 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]"
           )}
         >
-          {/* Header Info */}
           <div className="flex justify-between items-center gap-4 mb-1.5 h-5">
             <div className="flex items-center gap-2">
               <span className="font-bold text-xs text-zinc-200">{c.author.display_name}</span>
@@ -390,11 +352,9 @@ export function TrackComments({
               </span>
             </div>
 
-            {/* 隱藏的 Dropdown Trigger，透過 menuOpenId 控制顯示 */}
             {isOwner && (
               <DropdownMenu open={menuOpenId === c.id} onOpenChange={(open) => !open && setMenuOpenId(null)}>
                 <DropdownMenuTrigger asChild>
-                  {/* 這是一個隱形或極小的 trigger，實際上我們是用 open prop 來控制 */}
                   <span className="w-0 h-0 opacity-0 overflow-hidden" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300 z-50">
@@ -409,9 +369,8 @@ export function TrackComments({
             )}
           </div>
 
-          {/* Content Area */}
           {editingId === c.id ? (
-            <div className="w-full" onClick={(e) => e.stopPropagation() /* 防止編輯時觸發卡片點擊 */}>
+            <div className="w-full" onClick={(e) => e.stopPropagation()}>
               <textarea 
                 value={editContent} 
                 onChange={(e) => setEditContent(e.target.value)}
@@ -427,7 +386,6 @@ export function TrackComments({
             <div className="flex items-end gap-2">
                <div className="flex-1 min-w-0">
                   <div className="inline">
-                    {/* 時間標記：改為純文字顯示，不再是 Button，點擊行為交給卡片本身 */}
                     <span className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 align-middle" style={{ transform: "translateY(-1px)" }}>
                       {formatTime(c.timestamp)}
                     </span>
@@ -435,7 +393,6 @@ export function TrackComments({
                   </div>
                </div>
                
-               {/* 狀態 icon：只顯示回覆數，不再顯示操作按鈕 */}
                {!isReply && (c.replyCount ?? 0) > 0 && (
                  <div className="shrink-0 flex items-center ml-1 h-5 self-end opacity-70">
                     <MessageSquare size={12} className="text-zinc-500 mr-1" />
@@ -488,8 +445,10 @@ export function TrackComments({
         )}
       </div>
 
-      {/* Input Area */}
-      <div className="shrink-0 bg-zinc-950 border-t border-zinc-800 p-4 sticky bottom-0 z-20 shadow-[0_-12px_24px_rgba(0,0,0,0.5)]">
+      {/* ✅ 關鍵修改：將 container 的 padding 從 p-4 改為 px-3 py-2 
+         這能減少底部黑色區塊的高度，讓輸入框更貼近鍵盤/預測列。
+      */}
+      <div className="shrink-0 bg-zinc-950 border-t border-zinc-800 px-3 py-2 sticky bottom-0 z-20 shadow-[0_-12px_24px_rgba(0,0,0,0.5)]">
         {replyTarget && (
           <div className="bg-blue-600/10 border-l-2 border-blue-600 pl-3 pr-2 py-2 mb-3 rounded-r animate-in slide-in-from-bottom-2 duration-300 flex items-center gap-3">
              <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden text-sm">
