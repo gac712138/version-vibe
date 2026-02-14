@@ -2,13 +2,14 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react"; 
 import { type CommentWithUser, deleteComment, updateComment } from "@/app/actions/comments";
-import { CommentInput } from "@/app/project/[id]/CommentInput";
+import { CommentInput } from "@/app/project/[id]/CommentInput"; // 請確認路徑是否正確
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { MoreHorizontal, Pencil, Trash2, Loader2, MessageSquare, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils"; 
 import { createClient } from "@/utils/supabase/client"; 
+import { useSearchParams } from "next/navigation"; // ✅ 1. 引入 useSearchParams
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,18 +55,19 @@ export function TrackComments({
   projectId, assetId, currentTime, canEdit, comments: initialComments, totalCount, isLoading, isLoadingMore, currentUserId, onSeek, onRefresh, onLoadMore, onCommentChange, hasMore, className 
 }: TrackCommentsProps) {
   const supabase = createClient();
+  const searchParams = useSearchParams(); // ✅ 取得 URL 參數
   
   const [localComments, setLocalComments] = useState<CommentWithUser[]>(initialComments);
-  
-  // ✅ 1. 新增 Ref 來追蹤最新的 comments，解決 Realtime 閉包問題
   const commentsRef = useRef<CommentWithUser[]>(initialComments);
+
+  // 用於追蹤是否已經執行過自動滾動 (避免重複跳轉)
+  const hasScrolledToComment = useRef(false);
 
   useEffect(() => {
     setLocalComments(initialComments);
-    commentsRef.current = initialComments; // 同步 ref
+    commentsRef.current = initialComments;
   }, [initialComments]);
 
-  // 當 localComments 變動時，同步更新 Ref (這樣 Realtime listener 就能讀到最新的值)
   useEffect(() => {
     commentsRef.current = localComments;
   }, [localComments]);
@@ -75,106 +77,84 @@ export function TrackComments({
   const [replyTarget, setReplyTarget] = useState<{ 
     id: string; name: string; rootId: string; content: string; timestamp: number; 
   } | null>(null);
+  
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const scrollToBottom = () => {
-    setTimeout(() => {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, 200);
-  };
+  // -------------------------------------------------------------
+  // ✅ 核心功能：自動展開並聚焦特定留言
+  // -------------------------------------------------------------
+  useEffect(() => {
+    const targetCommentId = searchParams.get("commentId");
 
-  const handleSelfCommentSuccess = async () => {
-    setReplyTarget(null);
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // 如果沒有指定 ID，或是資料還沒載入，或是已經滾動過了，就跳過
+    if (!targetCommentId || localComments.length === 0 || hasScrolledToComment.current) return;
 
-    const { data: myNewComment, error } = await supabase
-      .from('comments')
-      .select(`
-        *,
-        author:profiles (
-          id,
-          display_name,
-          avatar_url
-        )
-      `)
-      .eq('asset_id', assetId)
-      .eq('user_id', currentUserId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (myNewComment) {
-      // ✅ 修正：先檢查，然後在 setLocalComments 外面呼叫 onCommentChange
-      const exists = commentsRef.current.some(c => c.id === myNewComment.id);
-      
-      if (!exists) {
-         onCommentChange?.(assetId, 1);
-         setLocalComments(prev => [...prev, myNewComment as CommentWithUser]);
-         scrollToBottom();
+    // 1. 找到目標留言
+    const targetComment = localComments.find(c => c.id === targetCommentId);
+    
+    if (targetComment) {
+      // 2. 如果它是子留言，必須先展開父留言
+      if (targetComment.parent_id) {
+        setActiveThreadId(targetComment.parent_id);
+      } else {
+        // 如果它是父留言，也可以選擇展開它 (看需求，這裡設為展開)
+        setActiveThreadId(targetComment.id);
       }
-    }
-  };
 
-  // ✅ Realtime 監聽
+      // 3. 延遲滾動 (給 React 渲染展開動畫一點時間)
+      setTimeout(() => {
+        const element = document.getElementById(`comment-${targetCommentId}`);
+        if (element) {
+          element.scrollIntoView({ behavior: "smooth", block: "center" });
+          
+          // 4. 視覺提示：閃爍或高亮效果 (透過 CSS class 控制)
+          // 這裡我們只做滾動，視覺樣式在 renderCommentItem 處理
+        }
+      }, 300);
+
+      hasScrolledToComment.current = true;
+    }
+  }, [searchParams, localComments]); 
+
+  // 當切換 asset 時，重置滾動狀態，這樣下次點擊通知跳回來時才能再次觸發
+  useEffect(() => {
+    hasScrolledToComment.current = false;
+  }, [assetId]);
+
+  // ... (Realtime 監聽邏輯保持不變)
   useEffect(() => {
     if (!assetId) return;
-
-    const channel = supabase
-      .channel(`comments:${assetId}`)
-      
+    const channel = supabase.channel(`comments:${assetId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'comments', filter: `asset_id=eq.${assetId}` }, async (payload) => {
           const newId = payload.new.id;
-          
-          // ✅ 修正：使用 Ref 檢查是否存在，避免在 setState 內部呼叫 side effect
           if (commentsRef.current.some(c => c.id === newId)) return;
-          
-          // 確定是新的，通知父層 +1
           onCommentChange?.(assetId, 1);
-
-          // 補抓 Author 資料
-          const { data: fullComment } = await supabase
-            .from('comments')
-            .select(`*, author:profiles(id, display_name, avatar_url)`)
-            .eq('id', newId)
-            .single();
-            
+          const { data: fullComment } = await supabase.from('comments').select(`*, author:profiles(id, display_name, avatar_url)`).eq('id', newId).single();
           if (fullComment) {
             setLocalComments(prev => {
-                // 二次檢查 (防止非同步期間重複)
                 if (prev.some(c => c.id === fullComment.id)) return prev;
                 // @ts-ignore
                 return [...prev, fullComment as CommentWithUser];
             });
           }
       })
-
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'comments', filter: `asset_id=eq.${assetId}` }, (payload) => {
-          setLocalComments(prev => prev.map(c => 
-            c.id === payload.new.id 
-              ? { ...c, content: payload.new.content, updated_at: payload.new.updated_at } 
-              : c
-          ));
+          setLocalComments(prev => prev.map(c => c.id === payload.new.id ? { ...c, content: payload.new.content, updated_at: payload.new.updated_at } : c));
       })
-
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'comments' }, (payload) => {
           const deletedId = payload.old.id;
-          
-          // ✅ 修正：使用 Ref 檢查
           if (commentsRef.current.some(c => c.id === deletedId)) {
              onCommentChange?.(assetId, -1);
              setLocalComments(prev => prev.filter(c => c.id !== deletedId));
           }
       })
       .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [assetId, supabase, onCommentChange]);
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [assetId, supabase, onCommentChange]); // commentsRef 不需要放進依賴
-
-  // Observer & Thread Logic ...
+  // ... (Observer 保持不變)
   const observer = useRef<IntersectionObserver | null>(null);
   const lastElementRef = useCallback((node: HTMLDivElement) => {
     if (isLoading || isLoadingMore) return;
@@ -196,65 +176,54 @@ export function TrackComments({
     }));
   }, [localComments]);
 
+  const handleSelfCommentSuccess = async () => {
+    setReplyTarget(null);
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const { data: myNewComment } = await supabase.from('comments').select(`*, author:profiles (id, display_name, avatar_url)`).eq('asset_id', assetId).eq('user_id', currentUserId).order('created_at', { ascending: false }).limit(1).single();
+    if (myNewComment) {
+      const exists = commentsRef.current.some(c => c.id === myNewComment.id);
+      if (!exists) {
+         onCommentChange?.(assetId, 1);
+         setLocalComments(prev => [...prev, myNewComment as CommentWithUser]);
+         scrollToBottom();
+      }
+    }
+  };
+  
+  const scrollToBottom = () => {
+    setTimeout(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, 200);
+  };
+
   const handleParentIconClick = (comment: CommentWithUser) => {
     if (activeThreadId === comment.id) {
       setActiveThreadId(null);
       setReplyTarget(null);
     } else {
       setActiveThreadId(comment.id);
-      setReplyTarget({
-        id: comment.id,
-        name: comment.author.display_name,
-        rootId: comment.id,
-        content: comment.content,
-        timestamp: comment.timestamp
-      });
+      setReplyTarget({ id: comment.id, name: comment.author.display_name, rootId: comment.id, content: comment.content, timestamp: comment.timestamp });
     }
   };
 
   const handleChildIconClick = (child: CommentWithUser, rootId: string) => {
     setActiveThreadId(rootId); 
-    setReplyTarget({
-      id: child.id,
-      name: child.author.display_name,
-      rootId: rootId,
-      content: child.content,
-      timestamp: child.timestamp
-    });
+    setReplyTarget({ id: child.id, name: child.author.display_name, rootId: rootId, content: child.content, timestamp: child.timestamp });
   };
 
   const handleCommentDelete = async (id: string) => {
     if (!confirm("確定要刪除這條留言嗎？")) return;
-    
-    // ✅ 修正：先檢查是否存在，然後更新
     const exists = localComments.some(c => c.id === id);
     if (exists) {
         onCommentChange?.(assetId, -1);
         setLocalComments(prev => prev.filter(c => c.id !== id));
     }
-    
-    try {
-      await deleteComment(id);
-      toast.success("留言已刪除");
-    } catch (error) { 
-      toast.error("刪除失敗");
-    }
+    try { await deleteComment(id); toast.success("留言已刪除"); } catch (error) { toast.error("刪除失敗"); }
   };
 
   const handleCommentUpdate = async (id: string, content: string) => {
     if (!content.trim()) return;
-
-    setLocalComments(prev => prev.map(c => 
-      c.id === id ? { ...c, content: content } : c
-    ));
+    setLocalComments(prev => prev.map(c => c.id === id ? { ...c, content: content } : c));
     setEditingId(null);
-
-    try {
-      await updateComment(id, content);
-      toast.success("留言已更新");
-    } catch (error) {
-      toast.error("更新失敗");
-    }
+    try { await updateComment(id, content); toast.success("留言已更新"); } catch (error) { toast.error("更新失敗"); }
   };
 
   const formatTime = (sec: number) => new Date(sec * 1000).toISOString().substr(14, 5);
@@ -263,13 +232,7 @@ export function TrackComments({
     const parts = content.split(/(@\S+)/g);
     return (
       <span className="text-sm text-zinc-300 leading-relaxed break-words whitespace-pre-wrap">
-        {parts.map((part, i) => 
-          part.startsWith("@") ? (
-            <span key={i} className="text-blue-400 font-bold">{part}</span>
-          ) : (
-            part
-          )
-        )}
+        {parts.map((part, i) => part.startsWith("@") ? <span key={i} className="text-blue-400 font-bold">{part}</span> : part)}
       </span>
     );
   };
@@ -278,9 +241,20 @@ export function TrackComments({
     const isReply = !!rootId;
     const isOwner = currentUserId === c.user_id;
     const isActiveThread = !isReply && activeThreadId === c.id; 
+    
+    // ✅ 判斷是否為「目標聚焦」的留言 (從 URL 參數判斷)
+    const targetId = searchParams.get("commentId");
+    const isTarget = targetId === c.id;
 
     return (
-      <div key={c.id} className={cn("flex gap-3 mb-3 animate-in fade-in slide-in-from-bottom-2 duration-300", isReply && "ml-12")}>
+      <div 
+        key={c.id} 
+        id={`comment-${c.id}`} // ✅ 加入 ID 以便 scrollIntoView 抓取
+        className={cn(
+            "flex gap-3 mb-3 animate-in fade-in slide-in-from-bottom-2 duration-300 scroll-mt-24", // scroll-mt 確保滾動後不會被頂部擋住
+            isReply && "ml-12"
+        )}
+      >
         <Avatar className="w-9 h-9 border border-zinc-800 shrink-0 overflow-hidden rounded-full mt-1">
           <AvatarImage src={c.author.avatar_url || undefined} className="object-cover" />
           <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center">
@@ -289,10 +263,12 @@ export function TrackComments({
         </Avatar>
 
         <div className={cn(
-          "flex flex-col p-3 rounded-2xl w-fit min-w-[180px] max-w-[85%] md:max-w-[70%] border shadow-sm relative group transition-colors",
+          "flex flex-col p-3 rounded-2xl w-fit min-w-[180px] max-w-[85%] md:max-w-[70%] border shadow-sm relative group transition-all duration-500",
           editingId === c.id 
             ? "bg-zinc-800/80 border-blue-500/50" 
-            : (isActiveThread || isReply) ? "bg-zinc-900/40 border-zinc-800/50" : "bg-zinc-900/60 border-zinc-800"
+            : (isActiveThread || isReply) ? "bg-zinc-900/40 border-zinc-800/50" : "bg-zinc-900/60 border-zinc-800",
+          // ✅ 高亮樣式：如果是目標留言，加上藍色光暈與邊框
+          isTarget && "ring-2 ring-blue-500 bg-blue-500/10 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]"
         )}>
           <div className="flex justify-between items-center gap-4 mb-1.5 h-5">
             <div className="flex items-center gap-2">
@@ -377,7 +353,7 @@ export function TrackComments({
         ) : (
           <div className="space-y-1 pb-24">
             {threadedComments.length === 0 ? (
-              <div className="py-20 flex flex-col items-center justify-center text-zinc-1400 space-y-2 opacity-50"><p className="text-sm  tracking-widest uppercase">目前沒有留言</p></div>
+              <div className="py-20 flex flex-col items-center justify-center text-zinc-700 space-y-2 opacity-50"><p className="text-xs italic tracking-widest uppercase">No Feedback Yet</p></div>
             ) : (
               threadedComments.map((root, index) => {
                 const isLast = index === threadedComments.length - 1;
