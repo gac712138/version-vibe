@@ -6,7 +6,7 @@ import { type CommentWithUser, deleteComment, updateComment } from "@/app/action
 import { CommentInput } from "@/app/project/[id]/CommentInput"; 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { MoreHorizontal, Pencil, Trash2, Loader2, MessageSquare, X, Reply } from "lucide-react";
+import { Pencil, Trash2, Loader2, MessageSquare, X, Reply } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils"; 
 import { createClient } from "@/utils/supabase/client"; 
@@ -36,7 +36,7 @@ function getRelativeTime(dateString: string) {
 
 const formatTime = (sec: number) => new Date(sec * 1000).toISOString().substr(14, 5);
 
-// --- Custom Hook: 手勢邏輯 (保留上一版功能) ---
+// --- Custom Hook: 手勢邏輯 ---
 function useSmartGesture({
   onSingleClick,
   onDoubleClick,
@@ -270,7 +270,7 @@ export function TrackComments({
 
   const handleCommentUpdate = async (id: string, content: string) => {
     if (!content.trim()) return;
-    setLocalComments(prev => prev.map(c => c.id === id ? { ...c, content: content } : c));
+    setLocalComments(prev => prev.map(c => c.id === id ? { ...c, content: content, updated_at: new Date().toISOString() } : c));
     setEditingId(null);
     try { await updateComment(id, content); toast.success("留言已更新"); } catch (error) { toast.error("更新失敗"); }
   };
@@ -290,6 +290,9 @@ export function TrackComments({
     const isActiveThread = !isReply && activeThreadId === c.id; 
     const targetId = searchParams.get("commentId");
     const isTarget = targetId === c.id;
+
+    // ✅ 邏輯判斷：如果 updated_at 存在且不為 null，就代表被編輯過
+    const isEdited = !!c.updated_at;
 
     const gestureProps = useSmartGesture({
       onSingleClick: () => {
@@ -350,6 +353,13 @@ export function TrackComments({
               <span suppressHydrationWarning className="text-[10px] text-zinc-500 font-medium whitespace-nowrap">
                 {getRelativeTime(c.created_at)}
               </span>
+              
+              {/* ✅ 顯示 (已編輯) */}
+              {isEdited && (
+                <span className="text-[9px] text-zinc-600 italic -ml-1 whitespace-nowrap">
+                  (已編輯)
+                </span>
+              )}
             </div>
 
             {isOwner && (
@@ -445,9 +455,6 @@ export function TrackComments({
         )}
       </div>
 
-      {/* ✅ 關鍵修改：將 container 的 padding 從 p-4 改為 px-3 py-2 
-         這能減少底部黑色區塊的高度，讓輸入框更貼近鍵盤/預測列。
-      */}
       <div className="shrink-0 bg-zinc-950 border-t border-zinc-800 px-3 py-2 sticky bottom-0 z-20 shadow-[0_-12px_24px_rgba(0,0,0,0.5)]">
         {replyTarget && (
           <div className="bg-blue-600/10 border-l-2 border-blue-600 pl-3 pr-2 py-2 mb-3 rounded-r animate-in slide-in-from-bottom-2 duration-300 flex items-center gap-3">

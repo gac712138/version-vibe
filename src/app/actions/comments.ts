@@ -8,6 +8,8 @@ export interface CommentWithUser {
   content: string;
   timestamp: number;
   created_at: string;
+  // ✅ 新增：更新時間 (可能為 null)
+  updated_at: string | null;
   user_id: string;
   parent_id?: string | null; 
   replyCount?: number;
@@ -99,7 +101,7 @@ export async function getComments(
 }
 
 /**
- * 新增留言 (支援回覆 + @all + 通知去重)
+ * 新增留言
  */
 export async function createComment(data: {
   content: string;
@@ -113,7 +115,6 @@ export async function createComment(data: {
 
   if (!user) throw new Error("Unauthorized");
 
-  // 1. 寫入留言
   const { data: comment, error } = await supabase
     .from("comments")
     .insert({
@@ -122,6 +123,7 @@ export async function createComment(data: {
       asset_id: data.asset_id,
       user_id: user.id,
       parent_id: data.parent_id || null, 
+      // 新增時 updated_at 預設為 null，不需要特別寫
     })
     .select()
     .single();
@@ -131,59 +133,32 @@ export async function createComment(data: {
     throw error;
   }
 
-  // 2. 通知邏輯 (支援 @all 與去重)
+  // 通知邏輯 (略，保持原樣即可)
   try {
     const content = data.content;
-
-    // 只有當內容包含 @ 時才開始處理通知邏輯
     if (content.includes("@")) {
-      
-      // 平行抓取需要的資料：Asset資訊(為了track_id) 和 專案成員名單
       const [assetResult, membersResult] = await Promise.all([
         supabase.from("audio_assets").select("track_id").eq("id", data.asset_id).single(),
         supabase.from("project_members").select("user_id, display_name").eq("project_id", data.project_id)
       ]);
-
       const assetData = assetResult.data;
       const members = membersResult.data || [];
 
       if (members.length > 0) {
-        // ✅ 使用 Set 來儲存目標 User ID，自動處理重複
         const targetUserIds = new Set<string>();
-
-        // --- 邏輯 A: 處理 @all / @所有人 ---
         if (content.includes("@all") || content.includes("@所有人")) {
-          members.forEach(member => {
-            // 排除自己
-            if (member.user_id !== user.id) {
-              targetUserIds.add(member.user_id);
-            }
-          });
+          members.forEach(member => { if (member.user_id !== user.id) targetUserIds.add(member.user_id); });
         }
-
-        // --- 邏輯 B: 處理個別標註 ---
         const mentions = content.match(/@(\S+)/g);
         if (mentions) {
           for (const mention of mentions) {
-            // 如果是 @all 前面已經處理過了，這裡跳過
             if (mention === "@all" || mention === "@所有人") continue;
-
-            const rawName = mention.substring(1); // 去掉 @
-            const nameToFind = rawName.replace(/[.,!?;:]$/, ""); // 去掉標點符號
-
-            const targetMember = members.find(m => 
-              m.display_name?.toLowerCase() === nameToFind.toLowerCase()
-            );
-
-            // 如果找到成員，且不是自己，加入 Set
-            // (如果 @all 已經加過了，Set 會自動忽略這次加入)
-            if (targetMember && targetMember.user_id !== user.id) {
-              targetUserIds.add(targetMember.user_id);
-            }
+            const rawName = mention.substring(1);
+            const nameToFind = rawName.replace(/[.,!?;:]$/, "");
+            const targetMember = members.find(m => m.display_name?.toLowerCase() === nameToFind.toLowerCase());
+            if (targetMember && targetMember.user_id !== user.id) targetUserIds.add(targetMember.user_id);
           }
         }
-
-        // --- 邏輯 C: 批次寫入通知 ---
         if (targetUserIds.size > 0) {
           const notifications = Array.from(targetUserIds).map(receiverId => ({
             receiver_id: receiverId,
@@ -197,7 +172,6 @@ export async function createComment(data: {
             is_read: false,
             created_at: new Date().toISOString()
           }));
-
           await supabase.from("notifications").insert(notifications);
         }
       }
@@ -217,10 +191,20 @@ export async function deleteComment(commentId: string) {
   if (error) throw error;
 }
 
+// ✅ 修改：更新留言時，同步更新 updated_at
 export async function updateComment(commentId: string, content: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
-  const { error } = await supabase.from("comments").update({ content }).eq("id", commentId).eq("user_id", user.id);
+  
+  const { error } = await supabase
+    .from("comments")
+    .update({ 
+      content,
+      updated_at: new Date().toISOString() // 寫入當前時間
+    })
+    .eq("id", commentId)
+    .eq("user_id", user.id);
+    
   if (error) throw error;
 }
