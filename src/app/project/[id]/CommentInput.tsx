@@ -3,8 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { createComment } from "@/app/actions/comments";
-import { Send, Clock, AtSign } from "lucide-react";
+import { createComment } from "@/app/actions/comments"; // 確保路徑正確
+import { Send, Clock, AtSign, Users } from "lucide-react"; // ✅ 新增 Users icon
 import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
@@ -15,11 +15,9 @@ interface CommentInputProps {
   currentTime: number;
   onCommentSuccess: () => void;
   parentId?: string;
-  // ✅ 新增：接收來自父組件的初始文字（例如 @作者）
   initialValue?: string; 
 }
 
-// 支援 profiles 關聯資料的型別
 type Member = {
   user_id: string;
   display_name: string;
@@ -34,7 +32,7 @@ export function CommentInput({
   currentTime, 
   onCommentSuccess,
   parentId,
-  initialValue = "" // ✅ 正確接收屬性，預設為空字串
+  initialValue = "" 
 }: CommentInputProps) {
   const [content, setContent] = useState(initialValue);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -45,16 +43,14 @@ export function CommentInput({
   const supabase = createClient();
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // ✅ 核心同步邏輯：當點擊不同回覆目標時，更新內容並自動聚焦
   useEffect(() => {
     if (initialValue) {
       setContent(initialValue);
-      // 稍微延遲確保 DOM 渲染後聚焦
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   }, [initialValue]);
 
-  // 取得專案成員與其 profiles 資訊
+  // 取得專案成員 (並加入 @all 選項)
   useEffect(() => {
     async function getMembers() {
       if (!projectId) return;
@@ -69,7 +65,15 @@ export function CommentInput({
         .eq("project_id", projectId);
         
       if (data) {
-        setMembers(data as any);
+        // ✅ 關鍵修改：手動加入 'all' 選項在最前面
+        const allOption: Member = {
+          user_id: "all",          // 特殊 ID
+          display_name: "all",     // 顯示名稱 (會變成 @all)
+          profiles: null           // 沒有頭像
+        };
+
+        // 將 all 選項與後端抓回來的成員合併
+        setMembers([allOption, ...(data as any)]);
       }
     }
     getMembers();
@@ -78,6 +82,8 @@ export function CommentInput({
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setContent(value);
+    
+    // 簡單的 Mention 觸發邏輯 (抓取最後一個詞)
     const words = value.split(" ");
     const lastWord = words[words.length - 1];
 
@@ -103,7 +109,6 @@ export function CommentInput({
 
     setIsSubmitting(true);
     try {
-      // ✅ 正式將 parent_id 傳入後端 Action 以支援階層回覆
       await createComment({
         content,
         timestamp: currentTime,
@@ -123,6 +128,11 @@ export function CommentInput({
     }
   };
 
+  // 過濾後的成員列表
+  const filteredMembers = members.filter(m => 
+    (m.display_name || "").toLowerCase().includes(mentionFilter)
+  );
+
   return (
     <div className="relative w-full">
       {/* Mention 提示清單區 */}
@@ -132,9 +142,7 @@ export function CommentInput({
             <AtSign className="w-3 h-3" /> Mention Member
           </div>
           <div className="max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700">
-            {members
-              .filter(m => (m.display_name || "").toLowerCase().includes(mentionFilter))
-              .map(member => (
+            {filteredMembers.map(member => (
                 <button
                   key={member.user_id}
                   type="button"
@@ -142,19 +150,37 @@ export function CommentInput({
                   className="w-full px-3 py-2 text-left text-xs text-zinc-300 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-3 border-b border-zinc-800/50 last:border-0 group"
                 >
                   <Avatar className="h-6 w-6 border border-zinc-700 shadow-sm shrink-0">
-                    <AvatarImage 
-                      src={member.profiles?.avatar_url || ""} 
-                      className="object-cover" 
-                    />
-                    <AvatarFallback className="text-[9px] bg-zinc-800 text-zinc-400 group-hover:bg-blue-500 group-hover:text-white">
-                      {member.display_name?.[0]?.toUpperCase()}
-                    </AvatarFallback>
+                    {/* ✅ 判斷如果是 'all'，顯示 Users Icon，否則顯示正常頭像 */}
+                    {member.user_id === "all" ? (
+                      <div className="flex items-center justify-center w-full h-full bg-blue-600/20 text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition-colors">
+                        <Users size={14} />
+                      </div>
+                    ) : (
+                      <>
+                        <AvatarImage 
+                          src={member.profiles?.avatar_url || ""} 
+                          className="object-cover" 
+                        />
+                        <AvatarFallback className="text-[9px] bg-zinc-800 text-zinc-400 group-hover:bg-blue-500 group-hover:text-white">
+                          {member.display_name?.[0]?.toUpperCase()}
+                        </AvatarFallback>
+                      </>
+                    )}
                   </Avatar>
-                  <span className="truncate font-medium">{member.display_name || "未命名成員"}</span>
+                  
+                  {/* 顯示名稱 */}
+                  <div className="flex flex-col items-start overflow-hidden">
+                    <span className="truncate font-medium">
+                        {member.user_id === "all" ? "所有人" : (member.display_name || "未命名成員")}
+                    </span>
+                    {member.user_id === "all" && (
+                        <span className="text-[9px] opacity-60">@all</span>
+                    )}
+                  </div>
                 </button>
               ))}
             
-            {members.filter(m => (m.display_name || "").toLowerCase().includes(mentionFilter)).length === 0 && (
+            {filteredMembers.length === 0 && (
                <div className="p-3 text-center text-xs text-zinc-500">找不到成員</div>
             )}
           </div>
@@ -164,7 +190,6 @@ export function CommentInput({
       {/* 輸入框表單 */}
       <form onSubmit={handleSubmit} className="relative group">
         <div className="flex items-center gap-2 p-2 bg-zinc-900 border border-zinc-800 rounded-lg focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all shadow-inner">
-          {/* 時間標記 */}
           <div className="flex items-center gap-1 px-2 py-1 bg-blue-500/10 rounded text-blue-400 text-xs font-mono border border-blue-500/20">
             <Clock className="w-3 h-3" />
             {new Date(currentTime * 1000).toISOString().substr(14, 5)}
@@ -174,7 +199,7 @@ export function CommentInput({
             ref={inputRef}
             value={content}
             onChange={handleInputChange}
-            placeholder={parentId ? "寫下你的回覆..." : "輸入 @ 標記團員..."}
+            placeholder={parentId ? "寫下你的回覆..." : "輸入 @ 標記團員或 @all"}
             className="flex-1 bg-transparent border-none focus-visible:ring-0 text-sm placeholder:text-zinc-600 px-2"
           />
           
