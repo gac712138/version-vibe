@@ -118,9 +118,14 @@ export function CommentInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // ✅ 關鍵修正：如果是正在輸入法組字階段 (Composing)，則直接忽略 Enter，不執行送出
+    if (e.nativeEvent.isComposing) {
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       const isDesktop = window.matchMedia("(min-width: 768px)").matches;
-      // ✅ 檢查：如果是桌面版且目前「沒有正在送出」，才允許送出
+      // 確保不是送出中才觸發
       if (isDesktop && !isSubmitting) {
         e.preventDefault();
         handleSubmit(e);
@@ -131,10 +136,9 @@ export function CommentInput({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // ✅ 關鍵修正：如果在送出中 (isSubmitting 為 true)，直接擋下
     if (isSubmitting || !content.trim() || !assetId) return;
 
-    setIsSubmitting(true); // 立即鎖定狀態
+    setIsSubmitting(true);
 
     try {
       if (editingCommentId) {
@@ -162,7 +166,6 @@ export function CommentInput({
       console.error(error);
       toast.error("發送失敗");
     } finally {
-      // 無論成功失敗，最後才解鎖按鈕
       setIsSubmitting(false);
     }
   };
@@ -245,7 +248,6 @@ export function CommentInput({
           <Button 
             type="submit" 
             size="icon" 
-            // ✅ 確保 isSubmitting 為 true 時按鈕也失效
             disabled={isSubmitting || !content.trim()}
             className="bg-blue-600 hover:bg-blue-700 h-8 w-8 shrink-0 shadow-lg shadow-blue-900/20 transition-transform active:scale-95 rounded-full mb-0.5"
           >
