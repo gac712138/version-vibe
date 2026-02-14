@@ -1,23 +1,27 @@
 import { NextResponse } from "next/server";
+// 確保這裡的路徑指向你專案中正確的 Supabase Server Client 建立函式
 import { createClient } from "@/utils/supabase/server";
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
-  // "next" 參數是我們在 InvitePage 設定的，目的是讓 callback 知道交換完 cookie 後要去哪
+  // "next" 是登入後要跳轉的頁面，預設回 Dashboard
   const next = searchParams.get("next") ?? "/dashboard";
 
   if (code) {
     const supabase = await createClient();
-    // 交換 code 換取 session (寫入 cookie)
+    
+    // 核心動作：交換 Code 換取 Session Cookie
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     
     if (!error) {
-      // 登入成功，轉跳到 next 指定的頁面 (這裡是 /project/[id]/join)
+      // 成功後，轉跳到指定頁面
       return NextResponse.redirect(`${origin}${next}`);
+    } else {
+      console.error("Supabase Auth Error:", error);
     }
   }
 
-  // 如果失敗，轉回首頁或錯誤頁
-  return NextResponse.redirect(`${origin}/auth/auth-code-error`);
+  // 失敗時，轉回登入頁並帶上錯誤訊息
+  return NextResponse.redirect(`${origin}/login?error=auth_code_error`);
 }

@@ -2,81 +2,125 @@
 
 import { createClient } from "@/utils/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Chrome, Music2, Loader2 } from "lucide-react"; 
-import { useState } from "react";
+import { Chrome, Music2, Loader2, MessageCircle } from "lucide-react"; 
+import { useState, useEffect, Suspense } from "react";
+import { cn } from "@/lib/utils";
+import { useSearchParams } from "next/navigation";
 
-export default function LoginPage() {
-  const [isLoading, setIsLoading] = useState(false);
+function useIsLineBrowser() {
+  const [isLine, setIsLine] = useState(false);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const userAgent = window.navigator.userAgent.toLowerCase();
+      setIsLine(userAgent.includes("line"));
+    }
+  }, []);
+  return isLine;
+}
 
-  const handleLogin = async () => {
-    setIsLoading(true);
+function LoginForm() {
+  const [isLoading, setIsLoading] = useState<"google" | "line" | null>(null);
+  const isLineBrowser = useIsLineBrowser();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
     const supabase = createClient();
-    
-    try {
-      // 呼叫 Supabase 的 Google OAuth 登入
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          // 登入成功後，Google 會把使用者踢回這個網址
-          redirectTo: `${location.origin}/auth/callback`,
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
-          },
-        },
+
+    const handleAuth = async () => {
+      const hash = window.location.hash;
+      
+      // 解析網址 Token
+      if (hash.includes("access_token")) {
+        const params = new URLSearchParams(hash.substring(1));
+        const accessToken = params.get("access_token");
+        const refreshToken = params.get("refresh_token");
+
+        if (accessToken && refreshToken) {
+          const { data } = await supabase.auth.setSession({
+            access_token: accessToken,
+            refresh_token: refreshToken,
+          });
+          if (data.session) {
+            window.location.href = "/dashboard";
+            return;
+          }
+        }
+      }
+
+      // 狀態監聽
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+        if (session) {
+          window.location.href = "/dashboard";
+        }
       });
 
-      if (error) {
-        throw error;
-      }
-      
-    } catch (error) {
-      console.error("Login failed:", error);
-      setIsLoading(false); // 失敗才關閉 loading，成功的話會跳轉所以不用關
-    }
+      return subscription;
+    };
+
+    const authPromise = handleAuth();
+    return () => {
+      authPromise.then(sub => sub?.unsubscribe());
+    };
+  }, []);
+
+  const handleGoogleLogin = async () => {
+    setIsLoading("google");
+    const supabase = createClient();
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${location.origin}/auth/callback` },
+      });
+      if (error) throw error;
+    } catch { setIsLoading(null); }
+  };
+
+  const handleLineLogin = () => {
+    setIsLoading("line");
+    const callbackUrl = `${window.location.origin}/auth/callback/line`; 
+    const lineAuthUrl = new URL("https://access.line.me/oauth2/v2.1/authorize");
+    lineAuthUrl.searchParams.set("response_type", "code");
+    lineAuthUrl.searchParams.set("client_id", "2009131861"); 
+    lineAuthUrl.searchParams.set("redirect_uri", callbackUrl);
+    lineAuthUrl.searchParams.set("state", "vibe_secure_state"); 
+    lineAuthUrl.searchParams.set("scope", "profile openid email");
+    window.location.href = lineAuthUrl.toString();
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-black text-white">
-      {/* 卡片容器：使用 zinc 色系與 backdrop-blur 增加質感 */}
       <div className="w-full max-w-md space-y-8 rounded-xl border border-zinc-800 bg-zinc-900/50 p-10 text-center shadow-2xl backdrop-blur-sm">
-        
-        {/* Logo 與標題區 */}
         <div className="flex flex-col items-center space-y-4">
           <div className="p-4 bg-blue-600/20 rounded-full ring-1 ring-blue-500/50">
             <Music2 className="h-10 w-10 text-blue-500" />
           </div>
           <div className="space-y-2">
-            <h1 className="text-4xl font-bold tracking-tighter text-white">
-              VersionVibe
-            </h1>
-            <p className="text-zinc-400 text-sm">
-              專業混音交付與版本管理平台
-            </p>
+            <h1 className="text-4xl font-bold tracking-tighter text-white">VersionVibe</h1>
+            <p className="text-zinc-400 text-sm">專業混音交付與版本管理平台</p>
           </div>
         </div>
         
-        {/* 登入按鈕區 */}
-        <div className="pt-4 space-y-4">
-          <Button 
-            onClick={handleLogin}
-            disabled={isLoading}
-            size="lg" 
-            className="w-full gap-2 bg-white text-black hover:bg-zinc-200 font-bold h-12 text-base transition-all active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
-          >
-            {isLoading ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <Chrome className="h-5 w-5" />
-            )}
-            {isLoading ? "登入中..." : "使用google登入"}
+        <div className="pt-4 space-y-3">
+          {!isLineBrowser && (
+            <Button onClick={handleGoogleLogin} disabled={isLoading !== null} size="lg" className="w-full gap-2 bg-white text-black hover:bg-zinc-200 font-bold h-12">
+              {isLoading === "google" ? <Loader2 className="h-5 w-5 animate-spin" /> : <Chrome className="h-5 w-5" />}
+              使用 Google 登入
+            </Button>
+          )}
+          <Button onClick={handleLineLogin} disabled={isLoading !== null} size="lg" className="w-full gap-2 bg-[#06C755] hover:bg-[#05b34c] text-white font-bold h-12">
+            {isLoading === "line" ? <Loader2 className="h-5 w-5 animate-spin" /> : <MessageCircle className="h-5 w-5 fill-current" />}
+            使用 LINE 登入
           </Button>
-          
-          <p className="text-xs text-zinc-600 px-8 leading-relaxed">
-            點了繼續，代表您同意平台的服務與隱私權政策
-          </p>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="flex h-screen w-screen items-center justify-center bg-black text-white">載入中...</div>}>
+      <LoginForm />
+    </Suspense>
   );
 }
