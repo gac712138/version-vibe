@@ -2,7 +2,6 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react"; 
 import { type CommentWithUser, deleteComment, updateComment } from "@/app/actions/comments";
-// 請根據您的實際檔案結構確認此路徑
 import { CommentInput } from "@/app/project/[id]/CommentInput"; 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -290,8 +289,7 @@ export function TrackComments({
     const isActiveThread = !isReply && activeThreadId === c.id; 
     const targetId = searchParams.get("commentId");
     const isTarget = targetId === c.id;
-
-    // ✅ 邏輯判斷：如果 updated_at 存在且不為 null，就代表被編輯過
+    // @ts-ignore - updated_at 存在於資料庫但可能沒被 ORM 型別更新，這邊暫時忽略
     const isEdited = !!c.updated_at;
 
     const gestureProps = useSmartGesture({
@@ -337,6 +335,7 @@ export function TrackComments({
           </AvatarFallback>
         </Avatar>
 
+        {/* ✅ 卡片容器：加上 relative 以便內部定位 Trigger */}
         <div 
           {...gestureProps}
           className={cn(
@@ -347,40 +346,51 @@ export function TrackComments({
             isTarget && "ring-2 ring-blue-500 bg-blue-500/10 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]"
           )}
         >
-          <div className="flex justify-between items-center gap-4 mb-1.5 h-5">
+          {/* ✅ 隱藏的 Dropdown 選單結構：包覆在卡片內，但 Trigger 覆蓋整張卡片 */}
+          {isOwner && (
+            <DropdownMenu open={menuOpenId === c.id} onOpenChange={(open) => !open && setMenuOpenId(null)}>
+              {/* Trigger 是一個隱形層 (opacity-0)，絕對定位填滿整張卡片 (inset-0)。
+                 pointer-events-none 讓點擊事件可以「穿透」它，被下方的 div (gestureProps) 接收。
+                 但 Radix UI 仍會將其視為計算選單位置的 Anchor。
+              */}
+              <DropdownMenuTrigger asChild>
+                <div className="absolute inset-0 w-full h-full pointer-events-none opacity-0 z-0" aria-hidden="true" />
+              </DropdownMenuTrigger>
+              
+              {/* Content 設定：side="top" 優先顯示在上方，align="center" 置中 */}
+              <DropdownMenuContent 
+                side="top" 
+                align="center"
+                sideOffset={8}
+                collisionPadding={10} 
+                className="bg-zinc-900 border-zinc-800 text-zinc-300 z-50 min-w-[100px] shadow-xl"
+              >
+                <DropdownMenuItem onClick={() => { setEditingId(c.id); setEditContent(c.content); }} className="cursor-pointer text-xs py-2">
+                  <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleCommentDelete(c.id)} className="cursor-pointer text-xs text-red-400 py-2 focus:text-red-400 focus:bg-red-400/10">
+                  <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
+          <div className="flex justify-between items-center gap-4 mb-1.5 h-5 relative z-10">
             <div className="flex items-center gap-2">
               <span className="font-bold text-xs text-zinc-200">{c.author.display_name}</span>
               <span suppressHydrationWarning className="text-[10px] text-zinc-500 font-medium whitespace-nowrap">
                 {getRelativeTime(c.created_at)}
               </span>
-              
-              {/* ✅ 顯示 (已編輯) */}
               {isEdited && (
                 <span className="text-[9px] text-zinc-600 italic -ml-1 whitespace-nowrap">
                   (已編輯)
                 </span>
               )}
             </div>
-
-            {isOwner && (
-              <DropdownMenu open={menuOpenId === c.id} onOpenChange={(open) => !open && setMenuOpenId(null)}>
-                <DropdownMenuTrigger asChild>
-                  <span className="w-0 h-0 opacity-0 overflow-hidden" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="bg-zinc-900 border-zinc-800 text-zinc-300 z-50">
-                  <DropdownMenuItem onClick={() => { setEditingId(c.id); setEditContent(c.content); }} className="cursor-pointer text-xs">
-                    <Pencil className="mr-2 h-3 w-3" /> 編輯
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleCommentDelete(c.id)} className="cursor-pointer text-xs text-red-400">
-                    <Trash2 className="mr-2 h-3 w-3" /> 刪除
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
           </div>
 
           {editingId === c.id ? (
-            <div className="w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="w-full relative z-20" onClick={(e) => e.stopPropagation()}>
               <textarea 
                 value={editContent} 
                 onChange={(e) => setEditContent(e.target.value)}
@@ -393,7 +403,7 @@ export function TrackComments({
               </div>
             </div>
           ) : (
-            <div className="flex items-end gap-2">
+            <div className="flex items-end gap-2 relative z-10">
                <div className="flex-1 min-w-0">
                   <div className="inline">
                     <span className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 align-middle" style={{ transform: "translateY(-1px)" }}>
