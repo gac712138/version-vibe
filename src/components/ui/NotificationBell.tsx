@@ -34,34 +34,53 @@ export function NotificationBell() {
   useEffect(() => {
     fetchList();
 
-    // 2. 設定 Realtime 監聽 (修正版：使用專屬頻道 + 過濾器)
+    // 2. 設定 Realtime 監聽
     const setupRealtime = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
 
-      console.log(`🔌 [Notification] Subscribing for user: ${user.id}`);
+      if (!user) {
+        // console.warn("[⚠️ Debug] No user found, skipping subscription.");
+        return;
+      }
 
-      // 使用 user.id 作為頻道名稱，避免多帳號/多視窗衝突
+      // 🔍 Log 1: 確認目前登入的使用者與頻道名稱
+      const channelName = `notifications:${user.id}`;
+      // console.log(`%c[🔍 Debug] User: ${user.email} (${user.id})`, "color: #00bfff; font-weight: bold;");
+      // console.log(`%c[🔍 Debug] Subscribing to Channel: ${channelName}`, "color: #00bfff; font-weight: bold;");
+
       const channel = supabase
-        .channel(`notifications:${user.id}`)
+        .channel(channelName)
         .on(
           'postgres_changes',
           {
             event: 'INSERT',
             schema: 'public',
             table: 'notifications',
-            filter: `receiver_id=eq.${user.id}`, // ✅ 只監聽發給自己的
+            filter: `receiver_id=eq.${user.id}`, 
           },
           async (payload) => {
-             console.log("🔔 [Notification] New notification received!", payload);
+             // 🔔 Log 4: 確認有收到訊號
+             // console.log(`%c[🔔 Debug] EVENT RECEIVED on ${channelName}!`, "color: #00ff00; font-weight: bold;", payload);
+             
              await fetchList();
              toast.info("收到新通知！");
           }
         )
-        .subscribe();
+        .subscribe((status, err) => {
+          // 📡 Log 3: 確認連線狀態 (必須是 SUBSCRIBED)
+          // if (status === 'SUBSCRIBED') {
+          //   console.log(`%c[✅ Debug] Connected: ${channelName}`, "color: #00ff00; font-weight: bold;");
+          // } else {
+          //   console.log(`%c[📡 Debug] Status Changed: ${status}`, "color: orange; font-weight: bold;");
+          // }
+          
+          if (err) {
+            console.error(`[❌ Debug] Channel Error:`, err);
+          }
+        });
 
       return () => {
-        console.log(`🔌 [Notification] Unsubscribing...`);
+        // console.log(`[🔌 Debug] Unsubscribing: ${channelName}`);
         supabase.removeChannel(channel);
       };
     };
@@ -74,9 +93,8 @@ export function NotificationBell() {
     };
   }, []);
 
-  // 3. 點擊通知的行為 (已修正跳轉邏輯)
+  // 3. 點擊通知的行為
   const handleItemClick = async (notification: NotificationItem) => {
-    // 標記已讀
     if (!notification.is_read) {
       await markAsRead(notification.id);
       setNotifications(prev => prev.map(n => n.id === notification.id ? { ...n, is_read: true } : n));
@@ -84,31 +102,24 @@ export function NotificationBell() {
     }
     setIsOpen(false);
 
-    // 路由邏輯
     let targetPath = `/project/${notification.project_id}`;
 
-    // 如果是舊版路由結構可能會用到 track_id，這裡保留
     if (notification.track_id) {
       targetPath += `/track/${notification.track_id}`;
     }
 
     const params = new URLSearchParams();
     
-    // ✅ 修正 1: 參數名稱改為 assetId (對應 TrackPlayer 的監聽)
     if (notification.asset_id) { 
       params.set("assetId", notification.asset_id);
     }
 
-    // ✅ 修正 2: 加入時間參數 t
-    // @ts-ignore: 忽略型別檢查，確保您後端有 select comment:comments(timestamp)
+    // @ts-ignore
     const timestamp = notification.comment?.timestamp;
-    
-    // 只有當 timestamp 存在且大於 0 時才帶入參數
     if (timestamp !== undefined && timestamp !== null) {
       params.set("t", timestamp.toString());
     }
 
-    // 帶上 commentId 讓前端可以做高亮或其他處理
     if (notification.comment_id) {
       params.set("commentId", notification.comment_id);
     }
@@ -135,7 +146,6 @@ export function NotificationBell() {
       </PopoverTrigger>
       
       <PopoverContent align="end" className="w-80 p-0 bg-zinc-950 border-zinc-800 text-zinc-200 shadow-xl z-50">
-        {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800 bg-zinc-900/50">
           <h4 className="font-semibold text-sm">通知中心</h4>
           {unreadCount > 0 && (
@@ -148,7 +158,6 @@ export function NotificationBell() {
           )}
         </div>
         
-        {/* List */}
         <div className="max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-700">
           {notifications.length === 0 ? (
             <div className="p-8 text-center text-zinc-500 text-xs flex flex-col items-center gap-2">
@@ -165,10 +174,7 @@ export function NotificationBell() {
                   !item.is_read ? "bg-blue-500/10" : "opacity-80"
                 )}
               >
-                {/* 🔥 臉書風格佈局：左頭像，右內容 */}
                 <div className="flex items-start gap-3">
-                  
-                  {/* 左側：大頭貼 */}
                   <Avatar className="w-10 h-10 border border-zinc-800 shrink-0 mt-1">
                     <AvatarImage src={item.sender?.avatar_url || ""} className="object-cover" />
                     <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs font-bold">
@@ -176,7 +182,6 @@ export function NotificationBell() {
                     </AvatarFallback>
                   </Avatar>
 
-                  {/* 右側：文字內容 */}
                   <div className="flex flex-col gap-1 w-full min-w-0">
                     <div className="text-sm leading-snug">
                       <span className="font-bold text-zinc-100 mr-1.5">

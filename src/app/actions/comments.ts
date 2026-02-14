@@ -9,7 +9,6 @@ export interface CommentWithUser {
   timestamp: number;
   created_at: string;
   user_id: string;
-  // ✅ 新增：支援回覆功能
   parent_id?: string | null; 
   replyCount?: number;
   author: {
@@ -37,7 +36,6 @@ export async function getComments(
   const from = (page - 1) * limit;
   const to = from + limit - 1;
 
-  // 1. 抓取留言 (原本的 select("*") 就會包含 parent_id)
   const { data: comments, count, error } = await supabase
     .from("comments")
     .select("*", { count: "exact" })
@@ -50,7 +48,6 @@ export async function getComments(
     return { data: [], count: 0 };
   }
 
-  // 2. 豐富化資料 (抓取作者資訊)
   const enrichedComments = await Promise.all(
     comments.map(async (c) => {
       let displayName = "未知成員";
@@ -89,7 +86,7 @@ export async function getComments(
           display_name: displayName,
           avatar_url: avatarUrl,
         },
-      } as CommentWithUser; // 強制轉型確保包含 parent_id
+      } as CommentWithUser; 
     })
   );
 
@@ -100,14 +97,13 @@ export async function getComments(
 }
 
 /**
- * 新增留言 (支援回覆)
+ * 新增留言 (支援回覆 + 通知去重)
  */
 export async function createComment(data: {
   content: string;
   timestamp: number;
   asset_id: string;
   project_id: string;
-  // ✅ 新增：允許傳入父留言 ID
   parent_id?: string; 
 }) {
   const supabase = await createClient();
@@ -123,7 +119,6 @@ export async function createComment(data: {
       timestamp: data.timestamp,
       asset_id: data.asset_id,
       user_id: user.id,
-      // ✅ 關鍵修正：將 parent_id 寫入資料庫
       parent_id: data.parent_id || null, 
     })
     .select()
@@ -134,11 +129,13 @@ export async function createComment(data: {
     throw error;
   }
 
-  // 2. 通知邏輯 (保持不變)
+  // 2. 通知邏輯 (已修正去重)
   try {
     if (data.content.includes("@")) {
       const mentions = data.content.match(/@(\S+)/g);
+      
       if (mentions) {
+        // 抓取相關資訊
         const { data: assetData } = await supabase
             .from("audio_assets")
             .select("track_id")
@@ -151,27 +148,38 @@ export async function createComment(data: {
           .eq("project_id", data.project_id);
 
         if (members && members.length > 0) {
+          // ✅ 步驟 A: 建立一個 Set 來儲存「要發送通知的 User ID」
+          // Set 會自動過濾重複的值
+          const targetUserIds = new Set<string>();
+
           for (const mention of mentions) {
-            const rawName = mention.substring(1); 
-            const nameToFind = rawName.replace(/[.,!?;:]$/, ""); 
+            const rawName = mention.substring(1); // 去掉 @
+            const nameToFind = rawName.replace(/[.,!?;:]$/, ""); // 去掉標點
 
             const targetMember = members.find(m => 
               m.display_name?.toLowerCase() === nameToFind.toLowerCase()
             );
 
+            // 如果找到了成員，且不是自己，就加入 Set
             if (targetMember && targetMember.user_id !== user.id) {
-              await supabase.from("notifications").insert({
-                receiver_id: targetMember.user_id,
-                sender_id: user.id,
-                project_id: data.project_id,
-                comment_id: comment.id,
-                asset_id: data.asset_id,     
-                track_id: assetData?.track_id,
-                type: 'mention',
-                content_preview: data.content.substring(0, 50),
-                is_read: false
-              });
+              targetUserIds.add(targetMember.user_id);
             }
+          }
+
+          // ✅ 步驟 B: 針對 Set 裡的每一個 ID 發送通知
+          // 這裡跑的迴圈次數 = 實際被 Tag 的人數 (不包含重複)
+          for (const receiverId of targetUserIds) {
+            await supabase.from("notifications").insert({
+              receiver_id: receiverId,
+              sender_id: user.id,
+              project_id: data.project_id,
+              comment_id: comment.id,
+              asset_id: data.asset_id,     
+              track_id: assetData?.track_id,
+              type: 'mention',
+              content_preview: data.content.substring(0, 50),
+              is_read: false
+            });
           }
         }
       }
