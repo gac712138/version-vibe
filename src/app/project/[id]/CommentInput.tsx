@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
-// import { Input } from "@/components/ui/input"; // ❌ 不再使用單行 Input
-import { createComment } from "@/app/actions/comments"; 
+import { createComment, updateComment } from "@/app/actions/comments"; 
 import { Send, Clock, AtSign, Users } from "lucide-react"; 
 import { toast } from "sonner";
 import { createClient } from "@/utils/supabase/client";
@@ -14,9 +13,10 @@ interface CommentInputProps {
   projectId: string;
   assetId: string;
   currentTime: number;
-  onCommentSuccess: () => void;
+  onCommentSuccess: (isEdit: boolean) => void;
   parentId?: string;
   initialValue?: string; 
+  editingCommentId?: string | null; 
 }
 
 type Member = {
@@ -33,7 +33,8 @@ export function CommentInput({
   currentTime, 
   onCommentSuccess,
   parentId,
-  initialValue = "" 
+  initialValue = "",
+  editingCommentId 
 }: CommentInputProps) {
   const [content, setContent] = useState(initialValue);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -43,32 +44,31 @@ export function CommentInput({
   const [mentionFilter, setMentionFilter] = useState("");
   const supabase = createClient();
   
-  // ✅ 改用 TextArea 的 Ref
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
+    setContent(initialValue || "");
     if (initialValue) {
-      setContent(initialValue);
-      setTimeout(() => textareaRef.current?.focus(), 50);
+      setTimeout(() => {
+        textareaRef.current?.focus();
+        if (editingCommentId && textareaRef.current) {
+           textareaRef.current.setSelectionRange(textareaRef.current.value.length, textareaRef.current.value.length);
+        }
+      }, 50);
     }
-  }, [initialValue]);
+  }, [initialValue, editingCommentId]);
 
-  // ✅ 自動調整高度的邏輯
   useEffect(() => {
     const textarea = textareaRef.current;
     if (textarea) {
-      // 先重置高度，讓 scrollHeight 重新計算 (處理刪除文字變矮的情況)
       textarea.style.height = 'auto'; 
-      // 設定新高度，最高不超過 120px (約 5-6 行)
       textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`;
     }
   }, [content]);
 
-  // 取得專案成員 (並加入 @all 選項)
   useEffect(() => {
     async function getMembers() {
       if (!projectId) return;
-      
       const { data } = await supabase
         .from("project_members")
         .select(`
@@ -93,9 +93,7 @@ export function CommentInput({
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setContent(value);
-    
-    // 檢查是否正在輸入 @ mention
-    const words = value.split(/[\s\n]+/); // 支援換行符號分割
+    const words = value.split(/[\s\n]+/);
     const lastWord = words[words.length - 1];
 
     if (lastWord.startsWith("@")) {
@@ -107,8 +105,7 @@ export function CommentInput({
   };
 
   const insertMention = (displayName: string) => {
-    const words = content.split(/(\s+)/); // 保留空白分隔符
-    // 替換最後一個詞
+    const words = content.split(/(\s+)/);
     for (let i = words.length - 1; i >= 0; i--) {
       if (words[i].includes("@")) {
         words[i] = `@${displayName} `;
@@ -120,25 +117,11 @@ export function CommentInput({
     textareaRef.current?.focus();
   };
 
-  // ✅ 鍵盤事件：處理 Enter 送出 vs 換行
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
-      // 在電腦版：Enter 直接送出 (除非是在選手字詞)
-      // 在手機版：Enter 通常是換行，不會觸發這裡 (因為手機輸入法行為不同)，或者可以保留預設行為
-      
-      // 判斷是否為行動裝置的簡易方法 (選用)，或是統一行為：
-      // 這裡設定：只有 Shift+Enter 才是換行，Enter 是送出。
-      // 注意：手機鍵盤的「換行」鍵通常會發送 Enter 鍵碼，如果你希望手機按換行鍵是換行，
-      // 你可能需要判斷 window.innerWidth 或依賴使用者習慣點擊右邊按鈕。
-      
-      // 為了最佳體驗：
-      // 我們攔截 preventDefault，執行 submit。
-      // 但如果是手機 (Touch device)，通常使用者習慣按 UI 上的發送鈕，
-      // 鍵盤上的 Enter 鍵在 textarea 預設就是換行。
-      // 這裡我們做一個簡單判斷：如果螢幕寬度大於 768 (電腦)，則 Enter 送出；否則允許換行。
       const isDesktop = window.matchMedia("(min-width: 768px)").matches;
-      
-      if (isDesktop) {
+      // ✅ 檢查：如果是桌面版且目前「沒有正在送出」，才允許送出
+      if (isDesktop && !isSubmitting) {
         e.preventDefault();
         handleSubmit(e);
       }
@@ -147,23 +130,31 @@ export function CommentInput({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!content.trim() || !assetId) return;
+    
+    // ✅ 關鍵修正：如果在送出中 (isSubmitting 為 true)，直接擋下
+    if (isSubmitting || !content.trim() || !assetId) return;
 
-    setIsSubmitting(true);
+    setIsSubmitting(true); // 立即鎖定狀態
+
     try {
-      await createComment({
-        content,
-        timestamp: currentTime,
-        asset_id: assetId,
-        project_id: projectId,
-        parent_id: parentId, 
-      });
+      if (editingCommentId) {
+        await updateComment(editingCommentId, content);
+        toast.success("留言已更新");
+        onCommentSuccess(true); 
+      } else {
+        await createComment({
+          content,
+          timestamp: currentTime,
+          asset_id: assetId,
+          project_id: projectId,
+          parent_id: parentId, 
+        });
+        toast.success(parentId ? "回覆已送出" : "留言已送出");
+        onCommentSuccess(false); 
+      }
 
       setContent("");
-      toast.success(parentId ? "回覆已送出" : "留言已送出");
-      onCommentSuccess();
       
-      // 送出後重置高度
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
       }
@@ -171,6 +162,7 @@ export function CommentInput({
       console.error(error);
       toast.error("發送失敗");
     } finally {
+      // 無論成功失敗，最後才解鎖按鈕
       setIsSubmitting(false);
     }
   };
@@ -181,7 +173,6 @@ export function CommentInput({
 
   return (
     <div className="relative w-full">
-      {/* Mention 提示清單區 */}
       {showMentions && members.length > 0 && (
         <div className="absolute bottom-full mb-2 w-full max-w-[240px] bg-zinc-900 border border-zinc-800 rounded-lg shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2">
           <div className="p-2 border-b border-zinc-800 flex items-center gap-2 text-[10px] text-zinc-500 font-bold uppercase tracking-wider bg-zinc-950/50">
@@ -222,47 +213,39 @@ export function CommentInput({
                   </div>
                 </button>
               ))}
-            
-            {filteredMembers.length === 0 && (
-               <div className="p-3 text-center text-xs text-zinc-500">找不到成員</div>
-            )}
           </div>
         </div>
       )}
 
-      {/* 輸入框表單 */}
       <form onSubmit={handleSubmit} className="relative group">
-        {/* ✅ 修改：items-center -> items-end，讓按鈕在多行輸入時固定在底部 */}
         <div className="flex items-end gap-2 p-2 bg-zinc-900 border border-zinc-800 rounded-2xl focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500/20 transition-all shadow-inner">
-          {/* 時間標記 (固定在底部) */}
           <div className="flex items-center gap-1 px-2 py-1 bg-blue-500/10 rounded text-blue-400 text-xs font-mono border border-blue-500/20 mb-0.5">
             <Clock className="w-3 h-3" />
             {new Date(currentTime * 1000).toISOString().substr(14, 5)}
           </div>
           
-          {/* ✅ 替換為 Textarea */}
           <textarea
             ref={textareaRef}
             value={content}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
-            placeholder={parentId ? "寫下你的回覆..." : "輸入 @ 標記團員或 @all"}
+            placeholder={editingCommentId ? "編輯訊息..." : (parentId ? "寫下你的回覆..." : "輸入 @ 標記團員或 @all")}
             rows={1}
             className={cn(
               "flex-1 bg-transparent border-none focus:ring-0 text-sm placeholder:text-zinc-600 px-2 py-1.5 resize-none max-h-[120px] min-h-[36px]",
-              "scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent" // 自訂捲軸樣式
+              "scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent"
             )}
-            style={{ outline: 'none' }} // 強制移除 focus outline (由外層 div 處理)
+            style={{ outline: 'none' }} 
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="none"
             spellCheck={false}
           />
           
-          {/* 送出按鈕 (固定在底部) */}
           <Button 
             type="submit" 
             size="icon" 
+            // ✅ 確保 isSubmitting 為 true 時按鈕也失效
             disabled={isSubmitting || !content.trim()}
             className="bg-blue-600 hover:bg-blue-700 h-8 w-8 shrink-0 shadow-lg shadow-blue-900/20 transition-transform active:scale-95 rounded-full mb-0.5"
           >

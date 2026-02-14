@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useMemo, useEffect } from "react"; 
-import { type CommentWithUser, deleteComment, updateComment } from "@/app/actions/comments";
+import { type CommentWithUser, deleteComment } from "@/app/actions/comments";
 import { CommentInput } from "@/app/project/[id]/CommentInput"; 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,6 @@ function getRelativeTime(dateString: string) {
 
 const formatTime = (sec: number) => new Date(sec * 1000).toISOString().substr(14, 5);
 
-// --- Custom Hook: 手勢邏輯 ---
 function useSmartGesture({
   onSingleClick,
   onDoubleClick,
@@ -151,8 +150,8 @@ export function TrackComments({
     commentsRef.current = localComments;
   }, [localComments]);
 
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editContent, setEditContent] = useState("");
+  const [editTarget, setEditTarget] = useState<{ id: string; content: string; } | null>(null);
+  
   const [replyTarget, setReplyTarget] = useState<{ 
     id: string; name: string; rootId: string; content: string; timestamp: number; 
   } | null>(null);
@@ -198,7 +197,6 @@ export function TrackComments({
           if (fullComment) {
             setLocalComments(prev => {
                 if (prev.some(c => c.id === fullComment.id)) return prev;
-                // @ts-ignore
                 return [...prev, fullComment as CommentWithUser];
             });
           }
@@ -239,17 +237,25 @@ export function TrackComments({
     }));
   }, [localComments]);
 
-  const handleSelfCommentSuccess = async () => {
+  // ✅ 關鍵修正：接收 isEdit 參數
+  const handleSelfCommentSuccess = async (isEdit: boolean = false) => {
     setReplyTarget(null);
+    setEditTarget(null);
+
+    // 如果是編輯，什麼都不用做，Realtime 會自動更新內容
+    if (isEdit) return;
+
+    // 只有在「新增」時才執行抓取與滾動
     await new Promise(resolve => setTimeout(resolve, 500));
     const { data: myNewComment } = await supabase.from('comments').select(`*, author:profiles (id, display_name, avatar_url)`).eq('asset_id', assetId).eq('user_id', currentUserId).order('created_at', { ascending: false }).limit(1).single();
     if (myNewComment) {
-      const exists = commentsRef.current.some(c => c.id === myNewComment.id);
-      if (!exists) {
+      // 雙重檢查：確保不會重複加入
+      setLocalComments(prev => {
+         if (prev.some(c => c.id === myNewComment.id)) return prev;
          onCommentChange?.(assetId, 1);
-         setLocalComments(prev => [...prev, myNewComment as CommentWithUser]);
-         scrollToBottom();
-      }
+         return [...prev, myNewComment as CommentWithUser];
+      });
+      scrollToBottom();
     }
   };
   
@@ -267,13 +273,6 @@ export function TrackComments({
     try { await deleteComment(id); toast.success("留言已刪除"); } catch (error) { toast.error("刪除失敗"); }
   };
 
-  const handleCommentUpdate = async (id: string, content: string) => {
-    if (!content.trim()) return;
-    setLocalComments(prev => prev.map(c => c.id === id ? { ...c, content: content, updated_at: new Date().toISOString() } : c));
-    setEditingId(null);
-    try { await updateComment(id, content); toast.success("留言已更新"); } catch (error) { toast.error("更新失敗"); }
-  };
-
   const ParsedCommentContent = ({ content }: { content: string }) => {
     const parts = content.split(/(@\S+)/g);
     return (
@@ -289,16 +288,16 @@ export function TrackComments({
     const isActiveThread = !isReply && activeThreadId === c.id; 
     const targetId = searchParams.get("commentId");
     const isTarget = targetId === c.id;
-    // @ts-ignore - updated_at 存在於資料庫但可能沒被 ORM 型別更新，這邊暫時忽略
+    // @ts-ignore
     const isEdited = !!c.updated_at;
 
     const gestureProps = useSmartGesture({
       onSingleClick: () => {
-        if (editingId === c.id) return;
+        if (editTarget?.id === c.id) return;
         onSeek(c.timestamp);
       },
       onDoubleClick: () => {
-        if (editingId === c.id) return;
+        if (editTarget?.id === c.id) return;
         if (isReply) {
           setActiveThreadId(rootId!); 
           setReplyTarget({ id: c.id, name: c.author.display_name, rootId: rootId!, content: c.content, timestamp: c.timestamp });
@@ -310,6 +309,7 @@ export function TrackComments({
              setReplyTarget({ id: c.id, name: c.author.display_name, rootId: c.id, content: c.content, timestamp: c.timestamp });
           }
         }
+        setEditTarget(null);
         if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(30);
       },
       onLongPress: () => {
@@ -335,37 +335,31 @@ export function TrackComments({
           </AvatarFallback>
         </Avatar>
 
-        {/* ✅ 卡片容器：加上 relative 以便內部定位 Trigger */}
         <div 
           {...gestureProps}
           className={cn(
             "flex flex-col p-3 rounded-2xl w-fit min-w-[180px] max-w-[85%] md:max-w-[70%] border shadow-sm relative group transition-all duration-300 cursor-pointer active:scale-[0.98]",
-            editingId === c.id 
-              ? "bg-zinc-800/80 border-blue-500/50 cursor-auto"
-              : (isActiveThread || isReply) ? "bg-zinc-900/40 border-zinc-800/50 hover:bg-zinc-900/60" : "bg-zinc-900/60 border-zinc-800 hover:bg-zinc-800/80",
+            (isActiveThread || isReply) ? "bg-zinc-900/40 border-zinc-800/50 hover:bg-zinc-900/60" : "bg-zinc-900/60 border-zinc-800 hover:bg-zinc-800/80",
+            editTarget?.id === c.id && "ring-2 ring-yellow-500/50 bg-yellow-500/10 border-yellow-500/50",
             isTarget && "ring-2 ring-blue-500 bg-blue-500/10 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]"
           )}
         >
-          {/* ✅ 隱藏的 Dropdown 選單結構：包覆在卡片內，但 Trigger 覆蓋整張卡片 */}
           {isOwner && (
             <DropdownMenu open={menuOpenId === c.id} onOpenChange={(open) => !open && setMenuOpenId(null)}>
-              {/* Trigger 是一個隱形層 (opacity-0)，絕對定位填滿整張卡片 (inset-0)。
-                 pointer-events-none 讓點擊事件可以「穿透」它，被下方的 div (gestureProps) 接收。
-                 但 Radix UI 仍會將其視為計算選單位置的 Anchor。
-              */}
               <DropdownMenuTrigger asChild>
                 <div className="absolute inset-0 w-full h-full pointer-events-none opacity-0 z-0" aria-hidden="true" />
               </DropdownMenuTrigger>
-              
-              {/* Content 設定：side="top" 優先顯示在上方，align="center" 置中 */}
               <DropdownMenuContent 
-                side="top" 
-                align="center"
-                sideOffset={8}
+                side="bottom" 
+                align="start" 
+                sideOffset={8} 
                 collisionPadding={10} 
                 className="bg-zinc-900 border-zinc-800 text-zinc-300 z-50 min-w-[100px] shadow-xl"
               >
-                <DropdownMenuItem onClick={() => { setEditingId(c.id); setEditContent(c.content); }} className="cursor-pointer text-xs py-2">
+                <DropdownMenuItem onClick={() => { 
+                    setEditTarget({ id: c.id, content: c.content });
+                    setReplyTarget(null);
+                  }} className="cursor-pointer text-xs py-2">
                   <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleCommentDelete(c.id)} className="cursor-pointer text-xs text-red-400 py-2 focus:text-red-400 focus:bg-red-400/10">
@@ -389,38 +383,23 @@ export function TrackComments({
             </div>
           </div>
 
-          {editingId === c.id ? (
-            <div className="w-full relative z-20" onClick={(e) => e.stopPropagation()}>
-              <textarea 
-                value={editContent} 
-                onChange={(e) => setEditContent(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-700 rounded-md p-2 text-sm text-white focus:border-blue-500 outline-none resize-none min-h-[60px]"
-                autoFocus
-              />
-              <div className="flex justify-end gap-2 mt-2">
-                <Button size="sm" variant="ghost" onClick={() => setEditingId(null)} className="h-6 text-xs text-zinc-500">取消</Button>
-                <Button size="sm" onClick={() => handleCommentUpdate(c.id, editContent)} className="h-6 text-xs bg-blue-600 text-white">儲存</Button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-end gap-2 relative z-10">
-               <div className="flex-1 min-w-0">
-                  <div className="inline">
-                    <span className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 align-middle" style={{ transform: "translateY(-1px)" }}>
-                      {formatTime(c.timestamp)}
-                    </span>
-                    <ParsedCommentContent content={c.content} />
-                  </div>
+          <div className="flex items-end gap-2 relative z-10">
+             <div className="flex-1 min-w-0">
+                <div className="inline">
+                  <span className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 align-middle" style={{ transform: "translateY(-1px)" }}>
+                    {formatTime(c.timestamp)}
+                  </span>
+                  <ParsedCommentContent content={c.content} />
+                </div>
+             </div>
+             
+             {!isReply && (c.replyCount ?? 0) > 0 && (
+               <div className="shrink-0 flex items-center ml-1 h-5 self-end opacity-70">
+                  <MessageSquare size={12} className="text-zinc-500 mr-1" />
+                  <span className="text-[10px] font-bold text-zinc-500 tabular-nums">{c.replyCount}</span>
                </div>
-               
-               {!isReply && (c.replyCount ?? 0) > 0 && (
-                 <div className="shrink-0 flex items-center ml-1 h-5 self-end opacity-70">
-                    <MessageSquare size={12} className="text-zinc-500 mr-1" />
-                    <span className="text-[10px] font-bold text-zinc-500 tabular-nums">{c.replyCount}</span>
-                 </div>
-               )}
-            </div>
-          )}
+             )}
+          </div>
         </div>
       </div>
     );
@@ -466,7 +445,8 @@ export function TrackComments({
       </div>
 
       <div className="shrink-0 bg-zinc-950 border-t border-zinc-800 px-3 py-2 sticky bottom-0 z-20 shadow-[0_-12px_24px_rgba(0,0,0,0.5)]">
-        {replyTarget && (
+        
+        {replyTarget && !editTarget && (
           <div className="bg-blue-600/10 border-l-2 border-blue-600 pl-3 pr-2 py-2 mb-3 rounded-r animate-in slide-in-from-bottom-2 duration-300 flex items-center gap-3">
              <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden text-sm">
                 <Reply size={14} className="text-blue-500 shrink-0" />
@@ -477,6 +457,16 @@ export function TrackComments({
              <button onClick={() => setReplyTarget(null)} className="text-zinc-500 hover:text-white transition-colors shrink-0 p-1"><X size={16} /></button>
           </div>
         )}
+
+        {editTarget && (
+          <div className="bg-yellow-600/10 border-l-2 border-yellow-600 pl-3 pr-2 py-2 mb-3 rounded-r animate-in slide-in-from-bottom-2 duration-300 flex items-center gap-3">
+             <div className="flex-1 min-w-0 flex items-center gap-2 overflow-hidden text-sm">
+                <Pencil size={14} className="text-yellow-500 shrink-0" />
+                <span className="text-yellow-500 font-bold shrink-0">正在編輯訊息</span>
+             </div>
+             <button onClick={() => setEditTarget(null)} className="text-zinc-500 hover:text-white transition-colors shrink-0 p-1"><X size={16} /></button>
+          </div>
+        )}
         
         <CommentInput 
           projectId={projectId} 
@@ -484,7 +474,8 @@ export function TrackComments({
           currentTime={currentTime} 
           parentId={replyTarget?.rootId} 
           onCommentSuccess={handleSelfCommentSuccess} 
-          initialValue={replyTarget ? `@${replyTarget.name} ` : ""}
+          initialValue={editTarget ? editTarget.content : (replyTarget ? `@${replyTarget.name} ` : "")}
+          editingCommentId={editTarget?.id}
         />
       </div>
     </div>
