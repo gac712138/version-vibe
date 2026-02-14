@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+// --- Helper Functions ---
 function getRelativeTime(dateString: string) {
   if (!dateString) return "剛剛";
   const now = new Date();
@@ -35,6 +36,7 @@ function getRelativeTime(dateString: string) {
 
 const formatTime = (sec: number) => new Date(sec * 1000).toISOString().substr(14, 5);
 
+// --- Custom Hook: 手勢邏輯 ---
 function useSmartGesture({
   onSingleClick,
   onDoubleClick,
@@ -113,6 +115,155 @@ function useSmartGesture({
   };
 }
 
+const ParsedCommentContent = ({ content }: { content: string }) => {
+  const parts = content.split(/(@\S+)/g);
+  return (
+    <span className="text-sm text-zinc-300 leading-relaxed break-words whitespace-pre-wrap select-text">
+      {parts.map((part, i) => part.startsWith("@") ? <span key={i} className="text-blue-400 font-bold">{part}</span> : part)}
+    </span>
+  );
+};
+
+// --- ✅ 關鍵修正：將 CommentItem 移到主組件外部 ---
+// 定義 Props 型別
+interface CommentItemProps {
+  c: CommentWithUser;
+  rootId?: string;
+  currentUserId: string | null;
+  activeThreadId: string | null;
+  editingId: string | null; // 這裡的 editingId 對應的是 editTarget.id
+  menuOpenId: string | null;
+  onSeek: (time: number) => void;
+  onReply: (comment: CommentWithUser, rootId: string) => void;
+  onEdit: (comment: CommentWithUser) => void;
+  onDelete: (id: string) => void;
+  setMenuOpenId: (id: string | null) => void;
+}
+
+const CommentItem = ({ 
+  c, 
+  rootId, 
+  currentUserId, 
+  activeThreadId, 
+  editingId, 
+  menuOpenId,
+  onSeek,
+  onReply,
+  onEdit,
+  onDelete,
+  setMenuOpenId 
+}: CommentItemProps) => {
+  const searchParams = useSearchParams();
+  const isReply = !!rootId;
+  const isOwner = currentUserId === c.user_id;
+  const isActiveThread = !isReply && activeThreadId === c.id; 
+  const targetId = searchParams.get("commentId");
+  const isTarget = targetId === c.id;
+  // @ts-ignore
+  const isEdited = !!c.updated_at;
+
+  const gestureProps = useSmartGesture({
+    onSingleClick: () => {
+      // 如果正在編輯這則留言，不觸發 Seek
+      if (editingId === c.id) return;
+      onSeek(c.timestamp);
+    },
+    onDoubleClick: () => {
+      if (editingId === c.id) return;
+      const targetRootId = rootId || c.id;
+      onReply(c, targetRootId);
+      if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(30);
+    },
+    onLongPress: () => {
+      if (isOwner) {
+        setMenuOpenId(c.id);
+      }
+    },
+    enableLongPress: isOwner, 
+  });
+
+  return (
+    <div 
+      id={`comment-${c.id}`} 
+      className={cn(
+          "flex gap-3 mb-3 animate-in fade-in slide-in-from-bottom-2 duration-300 scroll-mt-24", 
+          isReply && "ml-12"
+      )}
+    >
+      <Avatar className="w-9 h-9 border border-zinc-800 shrink-0 overflow-hidden rounded-full mt-1">
+        <AvatarImage src={c.author.avatar_url || undefined} className="object-cover" />
+        <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center">
+          {c.author.display_name?.[0]?.toUpperCase()}
+        </AvatarFallback>
+      </Avatar>
+
+      <div 
+        {...gestureProps}
+        className={cn(
+          "flex flex-col p-3 rounded-2xl w-fit min-w-[180px] max-w-[85%] md:max-w-[70%] border shadow-sm relative group transition-all duration-300 cursor-pointer active:scale-[0.98]",
+          (isActiveThread || isReply) ? "bg-zinc-900/40 border-zinc-800/50 hover:bg-zinc-900/60" : "bg-zinc-900/60 border-zinc-800 hover:bg-zinc-800/80",
+          editingId === c.id && "ring-2 ring-yellow-500/50 bg-yellow-500/10 border-yellow-500/50",
+          isTarget && "ring-2 ring-blue-500 bg-blue-500/10 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]"
+        )}
+      >
+        {isOwner && (
+          <DropdownMenu open={menuOpenId === c.id} onOpenChange={(open) => !open && setMenuOpenId(null)}>
+            <DropdownMenuTrigger asChild>
+              <div className="absolute inset-0 w-full h-full pointer-events-none opacity-0 z-0" aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent 
+              side="bottom" 
+              align="end" 
+              sideOffset={8} 
+              collisionPadding={10} 
+              className="bg-zinc-900 border-zinc-800 text-zinc-300 z-50 min-w-[100px] shadow-xl"
+            >
+              <DropdownMenuItem onClick={() => onEdit(c)} className="cursor-pointer text-xs py-2">
+                <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onDelete(c.id)} className="cursor-pointer text-xs text-red-400 py-2 focus:text-red-400 focus:bg-red-400/10">
+                <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+
+        <div className="flex justify-between items-center gap-4 mb-1.5 h-5 relative z-10">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-xs text-zinc-200">{c.author.display_name}</span>
+            <span suppressHydrationWarning className="text-[10px] text-zinc-500 font-medium whitespace-nowrap">
+              {getRelativeTime(c.created_at)}
+            </span>
+            {isEdited && (
+              <span className="text-[9px] text-zinc-600 italic -ml-1 whitespace-nowrap">
+                (已編輯)
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-end gap-2 relative z-10">
+           <div className="flex-1 min-w-0">
+              <div className="inline">
+                <span className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 align-middle" style={{ transform: "translateY(-1px)" }}>
+                  {formatTime(c.timestamp)}
+                </span>
+                <ParsedCommentContent content={c.content} />
+              </div>
+           </div>
+           
+           {!isReply && (c.replyCount ?? 0) > 0 && (
+             <div className="shrink-0 flex items-center ml-1 h-5 self-end opacity-70">
+                <MessageSquare size={12} className="text-zinc-500 mr-1" />
+                <span className="text-[10px] font-bold text-zinc-500 tabular-nums">{c.replyCount}</span>
+             </div>
+           )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface TrackCommentsProps {
   projectId: string;
   assetId: string;
@@ -151,7 +302,6 @@ export function TrackComments({
   }, [localComments]);
 
   const [editTarget, setEditTarget] = useState<{ id: string; content: string; } | null>(null);
-  
   const [replyTarget, setReplyTarget] = useState<{ 
     id: string; name: string; rootId: string; content: string; timestamp: number; 
   } | null>(null);
@@ -160,6 +310,41 @@ export function TrackComments({
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // --- Handlers (傳遞給 CommentItem 用) ---
+  const handleReply = useCallback((comment: CommentWithUser, rootId: string) => {
+    setActiveThreadId(rootId); 
+    setReplyTarget({ 
+      id: comment.id, 
+      name: comment.author.display_name, 
+      rootId: rootId, 
+      content: comment.content, 
+      timestamp: comment.timestamp 
+    });
+    setEditTarget(null);
+  }, []);
+
+  const handleEdit = useCallback((comment: CommentWithUser) => {
+    setEditTarget({ id: comment.id, content: comment.content });
+    setReplyTarget(null);
+  }, []);
+
+  const handleDelete = useCallback(async (id: string) => {
+    if (!confirm("確定要刪除這條留言嗎？")) return;
+    
+    // Optimistic Update
+    setLocalComments(prev => prev.filter(c => c.id !== id));
+    onCommentChange?.(assetId, -1);
+
+    try { 
+      await deleteComment(id); 
+      toast.success("留言已刪除"); 
+    } catch (error) { 
+      toast.error("刪除失敗"); 
+      // Rollback logic could be added here
+    }
+  }, [assetId, onCommentChange]);
+
+  // --- Auto Scroll Logic ---
   useEffect(() => {
     const targetCommentId = searchParams.get("commentId");
     if (!targetCommentId || localComments.length === 0 || hasScrolledToComment.current) return;
@@ -185,6 +370,7 @@ export function TrackComments({
     hasScrolledToComment.current = false;
   }, [assetId]);
 
+  // --- Realtime ---
   useEffect(() => {
     if (!assetId) return;
 
@@ -237,19 +423,16 @@ export function TrackComments({
     }));
   }, [localComments]);
 
-  // ✅ 關鍵修正：接收 isEdit 參數
   const handleSelfCommentSuccess = async (isEdit: boolean = false) => {
     setReplyTarget(null);
     setEditTarget(null);
 
-    // 如果是編輯，什麼都不用做，Realtime 會自動更新內容
+    // 如果是編輯，什麼都不用做 (Realtime 會更新)
     if (isEdit) return;
 
-    // 只有在「新增」時才執行抓取與滾動
     await new Promise(resolve => setTimeout(resolve, 500));
     const { data: myNewComment } = await supabase.from('comments').select(`*, author:profiles (id, display_name, avatar_url)`).eq('asset_id', assetId).eq('user_id', currentUserId).order('created_at', { ascending: false }).limit(1).single();
     if (myNewComment) {
-      // 雙重檢查：確保不會重複加入
       setLocalComments(prev => {
          if (prev.some(c => c.id === myNewComment.id)) return prev;
          onCommentChange?.(assetId, 1);
@@ -261,148 +444,6 @@ export function TrackComments({
   
   const scrollToBottom = () => {
     setTimeout(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, 200);
-  };
-
-  const handleCommentDelete = async (id: string) => {
-    if (!confirm("確定要刪除這條留言嗎？")) return;
-    const exists = localComments.some(c => c.id === id);
-    if (exists) {
-        onCommentChange?.(assetId, -1);
-        setLocalComments(prev => prev.filter(c => c.id !== id));
-    }
-    try { await deleteComment(id); toast.success("留言已刪除"); } catch (error) { toast.error("刪除失敗"); }
-  };
-
-  const ParsedCommentContent = ({ content }: { content: string }) => {
-    const parts = content.split(/(@\S+)/g);
-    return (
-      <span className="text-sm text-zinc-300 leading-relaxed break-words whitespace-pre-wrap select-text">
-        {parts.map((part, i) => part.startsWith("@") ? <span key={i} className="text-blue-400 font-bold">{part}</span> : part)}
-      </span>
-    );
-  };
-
-  const CommentItem = ({ c, rootId }: { c: CommentWithUser; rootId?: string }) => {
-    const isReply = !!rootId;
-    const isOwner = currentUserId === c.user_id;
-    const isActiveThread = !isReply && activeThreadId === c.id; 
-    const targetId = searchParams.get("commentId");
-    const isTarget = targetId === c.id;
-    // @ts-ignore
-    const isEdited = !!c.updated_at;
-
-    const gestureProps = useSmartGesture({
-      onSingleClick: () => {
-        if (editTarget?.id === c.id) return;
-        onSeek(c.timestamp);
-      },
-      onDoubleClick: () => {
-        if (editTarget?.id === c.id) return;
-        if (isReply) {
-          setActiveThreadId(rootId!); 
-          setReplyTarget({ id: c.id, name: c.author.display_name, rootId: rootId!, content: c.content, timestamp: c.timestamp });
-        } else {
-          if (activeThreadId === c.id) {
-             setReplyTarget({ id: c.id, name: c.author.display_name, rootId: c.id, content: c.content, timestamp: c.timestamp });
-          } else {
-             setActiveThreadId(c.id);
-             setReplyTarget({ id: c.id, name: c.author.display_name, rootId: c.id, content: c.content, timestamp: c.timestamp });
-          }
-        }
-        setEditTarget(null);
-        if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(30);
-      },
-      onLongPress: () => {
-        if (isOwner) {
-          setMenuOpenId(c.id);
-        }
-      },
-      enableLongPress: isOwner, 
-    });
-
-    return (
-      <div 
-        id={`comment-${c.id}`} 
-        className={cn(
-            "flex gap-3 mb-3 animate-in fade-in slide-in-from-bottom-2 duration-300 scroll-mt-24", 
-            isReply && "ml-12"
-        )}
-      >
-        <Avatar className="w-9 h-9 border border-zinc-800 shrink-0 overflow-hidden rounded-full mt-1">
-          <AvatarImage src={c.author.avatar_url || undefined} className="object-cover" />
-          <AvatarFallback className="bg-zinc-800 text-zinc-400 text-xs flex items-center justify-center">
-            {c.author.display_name?.[0]?.toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
-
-        <div 
-          {...gestureProps}
-          className={cn(
-            "flex flex-col p-3 rounded-2xl w-fit min-w-[180px] max-w-[85%] md:max-w-[70%] border shadow-sm relative group transition-all duration-300 cursor-pointer active:scale-[0.98]",
-            (isActiveThread || isReply) ? "bg-zinc-900/40 border-zinc-800/50 hover:bg-zinc-900/60" : "bg-zinc-900/60 border-zinc-800 hover:bg-zinc-800/80",
-            editTarget?.id === c.id && "ring-2 ring-yellow-500/50 bg-yellow-500/10 border-yellow-500/50",
-            isTarget && "ring-2 ring-blue-500 bg-blue-500/10 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]"
-          )}
-        >
-          {isOwner && (
-            <DropdownMenu open={menuOpenId === c.id} onOpenChange={(open) => !open && setMenuOpenId(null)}>
-              <DropdownMenuTrigger asChild>
-                <div className="absolute inset-0 w-full h-full pointer-events-none opacity-0 z-0" aria-hidden="true" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent 
-                side="bottom" 
-                align="start" 
-                sideOffset={8} 
-                collisionPadding={10} 
-                className="bg-zinc-900 border-zinc-800 text-zinc-300 z-50 min-w-[100px] shadow-xl"
-              >
-                <DropdownMenuItem onClick={() => { 
-                    setEditTarget({ id: c.id, content: c.content });
-                    setReplyTarget(null);
-                  }} className="cursor-pointer text-xs py-2">
-                  <Pencil className="mr-2 h-3.5 w-3.5" /> 編輯留言
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleCommentDelete(c.id)} className="cursor-pointer text-xs text-red-400 py-2 focus:text-red-400 focus:bg-red-400/10">
-                  <Trash2 className="mr-2 h-3.5 w-3.5" /> 刪除留言
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-
-          <div className="flex justify-between items-center gap-4 mb-1.5 h-5 relative z-10">
-            <div className="flex items-center gap-2">
-              <span className="font-bold text-xs text-zinc-200">{c.author.display_name}</span>
-              <span suppressHydrationWarning className="text-[10px] text-zinc-500 font-medium whitespace-nowrap">
-                {getRelativeTime(c.created_at)}
-              </span>
-              {isEdited && (
-                <span className="text-[9px] text-zinc-600 italic -ml-1 whitespace-nowrap">
-                  (已編輯)
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="flex items-end gap-2 relative z-10">
-             <div className="flex-1 min-w-0">
-                <div className="inline">
-                  <span className="inline-flex items-center justify-center mr-2 h-5 px-1.5 text-[10px] font-mono text-blue-400 bg-blue-500/10 rounded border border-blue-500/20 align-middle" style={{ transform: "translateY(-1px)" }}>
-                    {formatTime(c.timestamp)}
-                  </span>
-                  <ParsedCommentContent content={c.content} />
-                </div>
-             </div>
-             
-             {!isReply && (c.replyCount ?? 0) > 0 && (
-               <div className="shrink-0 flex items-center ml-1 h-5 self-end opacity-70">
-                  <MessageSquare size={12} className="text-zinc-500 mr-1" />
-                  <span className="text-[10px] font-bold text-zinc-500 tabular-nums">{c.replyCount}</span>
-               </div>
-             )}
-          </div>
-        </div>
-      </div>
-    );
   };
 
   return (
@@ -424,14 +465,41 @@ export function TrackComments({
             ) : (
               threadedComments.map((root, index) => {
                 const isLast = index === threadedComments.length - 1;
-                const isExpanded = activeThreadId === root.id;
+                // isExpanded 只是一種視覺狀態，為了避免重新渲染，可以考慮不使用狀態，但這裡為了動畫保留
+                // 這裡傳入 activeThreadId 讓 CommentItem 決定樣式，而不是在這裡條件渲染
                 return (
                   <div key={root.id} ref={isLast ? lastElementRef : null} className="space-y-1">
-                    <CommentItem c={root} />
-                    {isExpanded && root.replies.length > 0 && (
+                    <CommentItem 
+                      c={root}
+                      currentUserId={currentUserId}
+                      activeThreadId={activeThreadId}
+                      editingId={editTarget?.id || null}
+                      menuOpenId={menuOpenId}
+                      onSeek={onSeek}
+                      onReply={handleReply}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                      setMenuOpenId={setMenuOpenId}
+                    />
+                    {activeThreadId === root.id && root.replies.length > 0 && (
                       <div className="relative mt-1 mb-4 animate-in slide-in-from-top-2 duration-200">
                         <div className="absolute left-[26px] top-0 bottom-4 w-[2px] bg-zinc-800/40 rounded-full" />
-                        {root.replies.map(reply => <CommentItem key={reply.id} c={reply} rootId={root.id} />)}
+                        {root.replies.map(reply => (
+                          <CommentItem 
+                            key={reply.id} 
+                            c={reply} 
+                            rootId={root.id}
+                            currentUserId={currentUserId}
+                            activeThreadId={activeThreadId}
+                            editingId={editTarget?.id || null}
+                            menuOpenId={menuOpenId}
+                            onSeek={onSeek}
+                            onReply={handleReply}
+                            onEdit={handleEdit}
+                            onDelete={handleDelete}
+                            setMenuOpenId={setMenuOpenId}
+                          />
+                        ))}
                       </div>
                     )}
                   </div>
