@@ -1,8 +1,8 @@
 import { createClient } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
 import { Music2 } from "lucide-react";
-import { CreateProjectBtn } from "@/components/CreateProjectBtn"; 
-import { ProjectCard } from "@/components/ProjectCard"; // ✅ 匯入新的業務組件
+import { CreateProjectBtn } from "@/features/projects/components/CreateProjectBtn";
+import { ProjectCard } from "@/features/projects/components/ProjectCard";
 
 export default async function Dashboard() {
   const supabase = await createClient();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Play, Pause, MessageCircle, Volume2, VolumeX } from "lucide-react"; 
@@ -115,8 +115,9 @@ export function PlayerControls({
                  {Math.round(volume * 100)}%
                </div>
 
-               <Slider
-                value={[isMuted ? 0 : volume]}
+              {/* 修正：用 useMemo 包裹 value，避免每次 render 都新建 reference，防止無窮 setState */}
+              <Slider
+                value={React.useMemo(() => [isMuted ? 0 : volume], [isMuted, volume])}
                 max={1}
                 step={0.01}
                 onValueChange={handleVolumeChange}
@@ -167,8 +168,9 @@ export function PlayerControls({
             </div>
           </div>
           
+          {/* 修正：用 useMemo 包裹 value，避免每次 render 都新建 reference，防止無窮 setState */}
           <Slider
-            value={[currentTime]}
+            value={React.useMemo(() => [currentTime], [currentTime])}
             max={duration || 100}
             step={0.1}
             className="absolute inset-0 z-30 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"

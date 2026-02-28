@@ -1,11 +1,11 @@
 import { createClient } from "@/utils/supabase/server";
 import { notFound, redirect } from "next/navigation";
-import { TrackPlayer } from "@/components/TrackPlayer";
-import { TrackHeader } from "@/components/TrackHeader"; // ✅ 使用您現有的 Header
+import { TrackPlayer } from "@/features/player/components/TrackPlayer";
+import { TrackHeader } from "@/features/tracks/components/TrackHeader";
 import { Button } from "@/components/ui/button";
-import { FileAudio, ArrowLeft } from "lucide-react"; 
+import { FileAudio, ArrowLeft } from "lucide-react";
 import Link from "next/link";
-import { UploadVersionBtn } from "@/components/UploadVersionBtn";
+import { UploadVersionBtn } from "@/features/player/components/UploadVersionBtn";
 import type { ProjectRole } from "@/utils/supabase/role";
 
 export const revalidate = 0;

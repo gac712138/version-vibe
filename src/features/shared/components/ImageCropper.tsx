@@ -27,7 +27,6 @@ export function ImageCropper({ imageSrc, onCropComplete }: ImageCropperProps) {
           showGrid={true}
         />
       </div>
-      
       {/* 縮放控制條 (浮動在下方) */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-3/4 bg-zinc-950/80 backdrop-blur-md px-4 py-2 rounded-full border border-zinc-800 flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
         <span className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider">Zoom</span>

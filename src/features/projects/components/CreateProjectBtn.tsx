@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Plus, Loader2, Camera } from "lucide-react";
 import { createProject } from "@/app/actions/create-project";
 import { toast } from "sonner";
-import { ImageCropper } from "@/components/ImageCropper";
+import { ImageCropper } from "../../shared/components/ImageCropper";
 import { getCroppedImg } from "@/lib/canvasUtils";
 import { cn } from "@/lib/utils";
 

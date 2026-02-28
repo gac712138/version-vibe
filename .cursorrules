@@ -1,0 +1,46 @@
+1. 專案核心定位
+VersionVibe 是一個專為音樂製作人設計的「專業混音交付與版本管理平台」。
+
+目標：解決混音版本混亂、留言反饋不即時、音訊檔案管理困難等痛點。
+
+核心功能：無損音訊播放（Waveform 顯示）、即時留言系統、多版本切換、專案權限管理。
+
+2. 技術棧 (Tech Stack)
+框架：Next.js 14+ (App Router)。
+
+樣式：Tailwind CSS + Lucide React。
+
+後端/認證：Supabase (Auth, PostgreSQL, Realtime)。
+
+儲存：Cloudflare R2 (用於存放 .wav 高音質混音檔)。
+
+部署：Vercel (正式網域: versionvibe.island-dev.com)。
+
+3. 架構規範：Feature-Based Architecture
+本專案嚴格遵守 功能導向架構 (Feature-Based)，所有核心邏輯皆位於 src/features/ 下：
+
+目錄結構範例：features/{feature-name}/
+
+components/: 該功能專屬的 UI 組件。
+
+hooks/: 封裝 Supabase 調用與業務邏輯（如 useComments, useAudioPlayer）。
+
+types/: 定義該功能專用的 TypeScript Interface。
+
+index.ts: 該 Feature 的 唯一出口。嚴禁跨 Feature 直接引用內部私有檔案。
+
+4. 當前重構目標 (Refactor Status)
+目前正處於「邏輯抽離」階段，重點在於減少組件臃腫：
+
+關鍵組件優化：TrackComments (目標從 550 行降至 200 行) 與 TrackPlayer (目標從 463 行降至 200 行)。
+
+邏輯轉移：將 useEffect 與 supabase 直接調用移動至自定義 Hooks 中，實作「樂觀更新 (Optimistic Updates)」以提升體驗。
+
+5. 給 AI 的操作指南 (Developer Rules)
+優先考慮 Hooks：修改邏輯時，應優先檢查 features/{name}/hooks/，而非直接修改 .tsx。
+
+型別守則：嚴禁使用 any，應在 features/{name}/types/ 定義精準型別。
+
+即時通訊：留言相關功能必須考慮 Supabase Realtime 的同步性。
+
+路徑引用：一律使用 @/features/{name} 進行引用，確保架構邊界清晰。

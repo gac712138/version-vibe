@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, MoreHorizontal, Edit, Trash2 } from "lucide-react";
 import Link from "next/link";
-import { UploadVersionBtn } from "@/components/UploadVersionBtn";
+import { UploadVersionBtn } from "@/features/player/components/UploadVersionBtn";
 import {
   DropdownMenu,
   DropdownMenuContent,

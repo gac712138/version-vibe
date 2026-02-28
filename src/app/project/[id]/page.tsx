@@ -4,8 +4,8 @@ import Link from "next/link";
 import { Music, Users } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
-import { ProjectHeader } from "@/components/ProjectHeader";
-import { CreateTrackBtn } from "@/components/CreateTrackBtn"; 
+import { ProjectHeader } from "@/features/projects/components/ProjectHeader";
+import { CreateTrackBtn } from "@/features/tracks/components/CreateTrackBtn"; 
 
 
 import { InviteSection } from "./InviteSection";

@@ -26,7 +26,7 @@ import { updateProjectName, deleteProject } from "@/app/actions/core";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import type { ProjectRole } from "@/utils/supabase/role";
-import { ImageCropper } from "@/components/ImageCropper"; // 複用組件
+import { ImageCropper } from "../../shared/components/ImageCropper";
 import { getCroppedImg } from "@/lib/canvasUtils"; // 複用工具
 
 interface ProjectHeaderProps {

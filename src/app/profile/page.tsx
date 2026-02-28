@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Loader2, Upload, Trash2, User, Briefcase, Camera } from "lucide-react";
 import { toast } from "sonner";
-import { ImageCropper } from "@/components/ImageCropper"; 
+import { ImageCropper } from "../../features/shared/components/ImageCropper";
 import { getCroppedImg } from "@/lib/canvasUtils"; 
 import { createClient } from "@/utils/supabase/client";
 import { useRouter } from "next/navigation";
