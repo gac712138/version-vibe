@@ -1,3 +1,4 @@
+import React from "react";
 // Player feature types
 export interface Version {
   id: string;
@@ -41,4 +42,3 @@ export interface UseAudioEngineReturn extends AudioState, AudioControls {
   audioRefs: React.MutableRefObject<Record<string, HTMLAudioElement>>;
   setVersions: React.Dispatch<React.SetStateAction<Version[]>>;
 }
-  setVersions: React.Dispatch<React.SetStateAction<Version[]>>; // optional passthrough

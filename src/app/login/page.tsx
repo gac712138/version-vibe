@@ -7,20 +7,8 @@ import { useState, useEffect, Suspense } from "react";
 import { cn } from "@/lib/utils";
 import { useSearchParams } from "next/navigation";
 
-function useIsLineBrowser() {
-  const [isLine, setIsLine] = useState(false);
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const userAgent = window.navigator.userAgent.toLowerCase();
-      setIsLine(userAgent.includes("line"));
-    }
-  }, []);
-  return isLine;
-}
-
 function LoginForm() {
-  const [isLoading, setIsLoading] = useState<"google" | "line" | null>(null);
-  const isLineBrowser = useIsLineBrowser();
+  const [isLoading, setIsLoading] = useState<"google" | null>(null);
   const searchParams = useSearchParams();
 
   useEffect(() => {
@@ -75,17 +63,6 @@ function LoginForm() {
     } catch { setIsLoading(null); }
   };
 
-  const handleLineLogin = () => {
-    setIsLoading("line");
-    const callbackUrl = `${window.location.origin}/auth/callback/line`; 
-    const lineAuthUrl = new URL("https://access.line.me/oauth2/v2.1/authorize");
-    lineAuthUrl.searchParams.set("response_type", "code");
-    lineAuthUrl.searchParams.set("client_id", "2009131861"); 
-    lineAuthUrl.searchParams.set("redirect_uri", callbackUrl);
-    lineAuthUrl.searchParams.set("state", "vibe_secure_state"); 
-    lineAuthUrl.searchParams.set("scope", "profile openid email");
-    window.location.href = lineAuthUrl.toString();
-  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-black text-white">
@@ -101,15 +78,9 @@ function LoginForm() {
         </div>
         
         <div className="pt-4 space-y-3">
-          {!isLineBrowser && (
-            <Button onClick={handleGoogleLogin} disabled={isLoading !== null} size="lg" className="w-full gap-2 bg-white text-black hover:bg-zinc-200 font-bold h-12">
-              {isLoading === "google" ? <Loader2 className="h-5 w-5 animate-spin" /> : <Chrome className="h-5 w-5" />}
-              使用 Google 登入
-            </Button>
-          )}
-          <Button onClick={handleLineLogin} disabled={isLoading !== null} size="lg" className="w-full gap-2 bg-[#06C755] hover:bg-[#05b34c] text-white font-bold h-12">
-            {isLoading === "line" ? <Loader2 className="h-5 w-5 animate-spin" /> : <MessageCircle className="h-5 w-5 fill-current" />}
-            使用 LINE 登入
+          <Button onClick={handleGoogleLogin} disabled={isLoading !== null} size="lg" className="w-full gap-2 bg-white text-black hover:bg-zinc-200 font-bold h-12">
+            {isLoading === "google" ? <Loader2 className="h-5 w-5 animate-spin" /> : <Chrome className="h-5 w-5" />}
+            使用 Google 登入
           </Button>
         </div>
       </div>
